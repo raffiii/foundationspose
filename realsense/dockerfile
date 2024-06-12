@@ -1,11 +1,14 @@
-FROM librealsense/pyrealsense
+FROM wenbowen123/foundationpose
 
 RUN mkdir -p /etc/apt/keyrings
-RUN curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp | tee /etc/apt/keyrings/librealsense.pgp > /dev/null
+RUN curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp | tee /etc/apt/keyrings/librealsense.pgp 
 
-RUN echo "deb [signed-by=/etc/apt/keyrings/librealsense.pgp] https://librealsense.intel.com/Debian/apt-repo `lsb_release -cs` main" | tee /etc/apt/sources.list.d/librealsense.list
+RUN echo "deb [signed-by=/etc/apt/keyrings/librealsense.pgp] https://librealsense.intel.com/Debian/apt-repo focal main" | \
+    tee /etc/apt/sources.list.d/librealsense.list
+    
 RUN apt update
 
 RUN apt install -y librealsense2-dkms librealsense2-utils librealsense2-dev librealsense2-dbg
 
-RUN pip install pyrealsense2 numpy opencv-python
+RUN pip install pyrealsense2 
+#numpy opencv-python torch trimesh imageio joblib psutil scipy 

@@ -2,24 +2,58 @@ import pyrealsense2 as rs
 import numpy as np
 import cv2
 
-print("reset start")
-ctx = rs.context()
-devices = ctx.query_devices()
-for dev in devices:
-    dev.hardware_reset()
-print("reset done")
+from estimater import *
 
-# Configure depth and color streams
-pipeline = rs.pipeline()
-config = rs.config()
 
-# Start streaming from the default RealSense camera
-config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+def run_pose_estimation_worker(color, depth,K, est:FoundationPose=None, debug=0, ob_id=None, device='cuda:0'):
+  torch.cuda.set_device(device)
+  est.to_device(device)
+  est.glctx = dr.RasterizeCudaContext(device=device)
 
-pipeline.start(config)
+  result = NestDict()
 
-try:
+  H,W = color.shape[:2]
+
+  debug_dir =est.debug_dir
+
+  pose = est.register(K=K, rgb=color, depth=depth, ob_mask=ob_mask, ob_id=ob_id)
+  logging.info(f"pose:\n{pose}")
+
+  if debug>=3:
+      m = est.mesh_ori.copy()
+      tmp = m.copy()
+      tmp.apply_transform(pose)
+      tmp.export(f'{debug_dir}/model_tf.obj')
+
+
+  return pose
+
+
+def run_with_pipeline(function):
+    print("reset start")
+    ctx = rs.context()
+    devices = ctx.query_devices()
+    for dev in devices:
+        dev.hardware_reset()
+    print("reset done")
+
+    # Configure depth and color streams
+    pipeline = rs.pipeline()
+    config = rs.config()
+
+    # Start streaming from the default RealSense camera
+    config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+
+    pipeline.start(config)
+    try:
+        function(pipeline)
+    finally:
+        # Stop streaming
+        pipeline.stop()
+        cv2.destroyAllWindows()
+
+def run_demo(pipeline):
     while True:
         # Wait for a coherent pair of frames: depth and color
         frames = pipeline.wait_for_frames()
@@ -45,7 +79,10 @@ try:
         # Break the loop on 'q' key press
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-finally:
-    # Stop streaming
-    pipeline.stop()
-    cv2.destroyAllWindows()
+
+
+# Precompute the model with run_ycbv/run_linemode in run_nerf.py
+def run_live_estimation(pipeline):
+    pass    
+if __name__ == '__main__':
+    run_with_pipeline(run_demo)
