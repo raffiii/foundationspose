@@ -110,7 +110,10 @@ def run_live_estimation(mesh):
             mask = np.ones(color_frame.shape()[:2])
             run_pose_estimation_worker(color_frame, depth_frame, K, est,ob_mask=mask)        
         
+def compute_mask(object, background, threshold=0.05):
+    diff = object - background
+    mask = np.abs(diff) > 265 * threshold
+    return mask
         
-    pass    
 if __name__ == '__main__':
     run_with_pipeline(run_demo)
