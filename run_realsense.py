@@ -1,9 +1,11 @@
 import pyrealsense2 as rs
 import numpy as np
 import cv2
-import trimesh
+#import trimesh
 
-from estimater import *
+#from estimater import *
+class FoundationPose:
+    pass
 
 
 def run_pose_estimation_worker(color, depth,K, est:FoundationPose, ob_mask=None, debug=0, ob_id=None, device='cuda:0'):
@@ -21,7 +23,7 @@ def run_pose_estimation_worker(color, depth,K, est:FoundationPose, ob_mask=None,
     pose = est.register(K=K, rgb=color, depth=depth, ob_mask=ob_mask)
     logging.info(f"pose:\n{pose}")
   else:
-    pose = est.track_one(rgb=color, depth=depth, K=reader.K, iteration=args.track_refine_iter)
+    pose = est.track_one(rgb=color, depth=depth, K=K, iteration=args.track_refine_iter)
 
   return pose
 
@@ -55,12 +57,14 @@ def run_with_pipeline(function):
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 
     pipeline.start(config)
+    result = None
     try:
-        function(pipeline)
+        result = function(pipeline)
     finally:
         # Stop streaming
         pipeline.stop()
         cv2.destroyAllWindows()
+    return result
 
 def run_demo(pipeline):
     while True:
@@ -111,9 +115,35 @@ def run_live_estimation(mesh):
             run_pose_estimation_worker(color_frame, depth_frame, K, est,ob_mask=mask)        
         
 def compute_mask(object, background, threshold=0.05):
-    diff = object - background
+    alpha = 1+threshold
+    result = np.hstack(((background > alpha * object) * 1.0 , (object < alpha* background) * 1.0))
+    cv2.imshow('RealSense', result * 1.0 )
+    cv2.waitKey(0)   
+    cv2.destroyAllWindows() 
+    less,more = (background > alpha * object , object <  alpha* background) 
+    diff = (np.max(more,axis=2) * 1.0 + np.max(less,axis=2) * 1.0) > 0
+    return diff
+    diff = background - object
     mask = np.abs(diff) > 265 * threshold
-    return mask
+    return np.min(mask,axis=2)
         
+def capture_mask(pipeline):
+    frames = pipeline.wait_for_frames()
+    color_frame = frames.get_color_frame()
+    background = np.asanyarray(color_frame.get_data())
+    input("Place object to track and hit enter:")
+    frames = pipeline.wait_for_frames()
+    color_frame = frames.get_color_frame()
+    object_image = np.asanyarray(color_frame.get_data())
+    return compute_mask(object_image,background)
+
+def fix_mask(mask,maskmask):
+    return (mask * 1.0) * (maskmask * 1.0)
+
 if __name__ == '__main__':
-    run_with_pipeline(run_demo)
+    result = run_with_pipeline(capture_mask)
+    shape = result.shape
+    result = fix_mask(result, np.vstack((np.zeros((shape[0]//2,shape[1])),np.ones((shape[0]-shape[0]//2,shape[1])))))
+    cv2.imshow('RealSense', result * 1.0 )
+    cv2.waitKey(0)   
+    cv2.destroyAllWindows() 

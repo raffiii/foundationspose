@@ -10,5 +10,5 @@ RUN apt update
 
 RUN apt install -y librealsense2-dkms librealsense2-utils librealsense2-dev librealsense2-dbg
 
-RUN pip install pyrealsense2 
+RUN pip install pyrealsense2 trimesh
 #numpy opencv-python torch trimesh imageio joblib psutil scipy 
