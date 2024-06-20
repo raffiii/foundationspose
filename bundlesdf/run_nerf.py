@@ -74,8 +74,7 @@ def run_one_ob(base_dir, cfg, use_refined_mask=False):
   return mesh
 
 
-def run_ycbv():
-  ob_ids = np.arange(1,22)
+def run_ycbv(ob_ids=np.arange(1,22)):
   code_dir = os.path.dirname(os.path.realpath(__file__))
   with open(f'{code_dir}/config_ycbv.yml','r') as ff:
     cfg = yaml.safe_load(ff)
@@ -107,9 +106,12 @@ if __name__=="__main__":
   code_dir = os.path.dirname(os.path.realpath(__file__))
   parser.add_argument('--ref_view_dir', type=str, default=f'/mnt/9a72c439-d0a7-45e8-8d20-d7a235d02763/DATASET/YCB_Video/bowen_addon/ref_views_16')
   parser.add_argument('--dataset', type=str, default=f'ycbv', help='one of [ycbv/linemod]')
+  parser.add_argument('--ob_ids', nargs='+', type=int, default=None, help='ids to train')
   args = parser.parse_args()
 
   if args.dataset=='ycbv':
     run_ycbv()
+  elif args.dataset=='ycbv-small':
+    run_ycbv(args.ob_ids)
   else:
     run_linemod()

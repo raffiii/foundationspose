@@ -1,11 +1,10 @@
 import pyrealsense2 as rs
 import numpy as np
 import cv2
-#import trimesh
+import trimesh
+import argparse
 
-#from estimater import *
-class FoundationPose:
-    pass
+from estimater import *
 
 
 def run_pose_estimation_worker(color, depth,K, est:FoundationPose, ob_mask=None, debug=0, ob_id=None, device='cuda:0'):
@@ -28,16 +27,23 @@ def run_pose_estimation_worker(color, depth,K, est:FoundationPose, ob_mask=None,
   return pose
 
 
-def build_estimator(mesh):
+def get_reconstructed_mesh(ob_id, ref_view_dir):
+  mesh = trimesh.load(os.path.abspath(f'{ref_view_dir}/ob_{ob_id:07d}/model/model.obj'))
+  return mesh
 
-  to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
-  bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
 
-  scorer = ScorePredictor()
-  refiner = PoseRefinePredictor()
-  glctx = dr.RasterizeCudaContext()
-  est = FoundationPose(model_pts=mesh.vertices, model_normals=mesh.vertex_normals, mesh=mesh, scorer=scorer, refiner=refiner, debug_dir=debug_dir, debug=debug, glctx=glctx)
-  logging.info("estimator initialization done")
+
+def build_estimator(mesh,opts):
+
+    to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
+    bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
+
+    scorer = ScorePredictor()
+    refiner = PoseRefinePredictor()
+    glctx = dr.RasterizeCudaContext()
+    est = FoundationPose(model_pts=mesh.vertices, model_normals=mesh.vertex_normals, mesh=mesh, scorer=scorer, refiner=refiner, debug_dir=opts.debug_dir, debug=opts.debug, glctx=glctx)
+    logging.info("estimator initialization done")
+    return est, to_origin, bbox, 
 
 
 def run_with_pipeline(function):
@@ -95,11 +101,15 @@ def run_demo(pipeline):
 
 
 # Precompute the model with run_ycbv/run_linemode in run_nerf.py
-def run_live_estimation(mesh):
-    est = build_estimator(mesh)
+def run_live_estimation(opts):
+    mesh = get_reconstructed_mesh(opts.ob_id, opts.ref_view_dir)
+    est, to_origin, bbox = build_estimator(mesh,opts)
     def run(pipeline):
+        mask = capture_mask(pipeline)
+        shape = mask.shape
+        mask = fix_mask(mask, np.vstack((np.zeros((shape[0]//2,shape[1])),np.ones((shape[0]-shape[0]//2,shape[1])))))
+    
         K = pipeline.todo
-        mask = True
         while(True):
             frames = pipeline.wait_for_frames()
             depth_frame = frames.get_depth_frame()
@@ -112,7 +122,8 @@ def run_live_estimation(mesh):
             depth_image = np.asanyarray(depth_frame.get_data())
             color_image = np.asanyarray(color_frame.get_data())
             mask = np.ones(color_frame.shape()[:2])
-            run_pose_estimation_worker(color_frame, depth_frame, K, est,ob_mask=mask)        
+            run_pose_estimation_worker(color_image, depth_image, K, est,ob_mask=mask)   
+    return run     
         
 def compute_mask(object, background, threshold=0.05):
     alpha = 1+threshold
@@ -123,9 +134,7 @@ def compute_mask(object, background, threshold=0.05):
     less,more = (background > alpha * object , object <  alpha* background) 
     diff = (np.max(more,axis=2) * 1.0 + np.max(less,axis=2) * 1.0) > 0
     return diff
-    diff = background - object
-    mask = np.abs(diff) > 265 * threshold
-    return np.min(mask,axis=2)
+    
         
 def capture_mask(pipeline):
     frames = pipeline.wait_for_frames()
@@ -140,10 +149,21 @@ def capture_mask(pipeline):
 def fix_mask(mask,maskmask):
     return (mask * 1.0) * (maskmask * 1.0)
 
-if __name__ == '__main__':
+def show_mask():
     result = run_with_pipeline(capture_mask)
     shape = result.shape
     result = fix_mask(result, np.vstack((np.zeros((shape[0]//2,shape[1])),np.ones((shape[0]-shape[0]//2,shape[1])))))
     cv2.imshow('RealSense', result * 1.0 )
     cv2.waitKey(0)   
     cv2.destroyAllWindows() 
+
+    
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--ref_view_dir', type=str, default='assets/banana/ref_views_16')
+    parser.add_argument('--ob_id', type=int,default=10)
+    parser.add_argument('--debug', type=int, default=0)
+    parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/debug')
+    opts = parser.parse_args()
+    run_with_pipeline(run_live_estimation(opts))
