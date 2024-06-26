@@ -126,7 +126,7 @@ def run_live_estimation(opts, device='cuda:0'):
 
             # Convert images to numpy arrays
             depth = np.asanyarray(depth_frame.get_data()).astype(np.float16)
-            depth = depth / np.max(depth) * 2.0
+            depth = depth / np.max(depth) * 4.0
             color = np.asanyarray(color_frame.get_data()).astype(np.float32) 
 
             print(f"min/max color: {np.min(color)}, {np.max(color)}")
@@ -138,7 +138,7 @@ def run_live_estimation(opts, device='cuda:0'):
             logging.info(f"Center pose: \n {center_pose}")
             vis = draw_posed_3d_box(K, img=color, ob_in_cam=center_pose, bbox=bbox)
             vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
-            cv2.imshow('1', vis[...,::-1])
+            cv2.imshow('1', vis[...,::1])
             cv2.waitKey(1)
     return run     
         
