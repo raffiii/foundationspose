@@ -7,22 +7,14 @@ import argparse
 from estimater import *
 
 
-def run_pose_estimation_worker(color, depth,K, est:FoundationPose, ob_mask=None, debug=0, ob_id=None, device='cuda:0'):
-  torch.cuda.set_device(device)
-  est.to_device(device)
-  est.glctx = dr.RasterizeCudaContext(device=device)
+def run_pose_estimation_worker(color, depth,K, est:FoundationPose,opts, ob_mask=None, debug=0, ob_id=None, device='cuda:0'):
+  
 
-  result = NestDict()
-
-  H,W = color.shape[:2]
-
-  debug_dir =est.debug_dir
-
-  if ob_mask is None:
+  if ob_mask is not None:
     pose = est.register(K=K, rgb=color, depth=depth, ob_mask=ob_mask)
     logging.info(f"pose:\n{pose}")
   else:
-    pose = est.track_one(rgb=color, depth=depth, K=K, iteration=args.track_refine_iter)
+    pose = est.track_one(rgb=color, depth=depth, K=K, iteration=opts.track_refine_iter)
 
   return pose
 
@@ -46,13 +38,17 @@ def build_estimator(mesh,opts):
     return est, to_origin, bbox, 
 
 
-def run_with_pipeline(function):
+def reset_cameras():
     print("reset start")
     ctx = rs.context()
     devices = ctx.query_devices()
     for dev in devices:
         dev.hardware_reset()
     print("reset done")
+
+
+def run_with_pipeline(function):
+    reset_cameras()
 
     # Configure depth and color streams
     pipeline = rs.pipeline()
@@ -101,7 +97,7 @@ def run_demo(pipeline):
 
 
 # Precompute the model with run_ycbv/run_linemode in run_nerf.py
-def run_live_estimation(opts):
+def run_live_estimation(opts, device='cuda:0'):
     mesh = get_reconstructed_mesh(opts.ob_id, opts.ref_view_dir)
     est, to_origin, bbox = build_estimator(mesh,opts)
     def run(pipeline):
@@ -109,7 +105,17 @@ def run_live_estimation(opts):
         shape = mask.shape
         mask = fix_mask(mask, np.vstack((np.zeros((shape[0]//2,shape[1])),np.ones((shape[0]-shape[0]//2,shape[1])))))
     
-        K = pipeline.todo
+        profile = pipeline.get_active_profile()
+        color_stream = profile.get_stream(rs.stream.depth)
+        intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
+        K = np.array([[intrinsics.fx,0.0,intrinsics.ppx],[0.0,intrinsics.fy, intrinsics.ppy],[0.0,0.0,1.0]])
+        # mask = np.ones((intrinsics.height, intrinsics.width))
+        
+        #
+        torch.cuda.set_device(device)
+        est.to_device(device)
+        est.glctx = dr.RasterizeCudaContext(device=device)
+
         while(True):
             frames = pipeline.wait_for_frames()
             depth_frame = frames.get_depth_frame()
@@ -119,18 +125,25 @@ def run_live_estimation(opts):
                 continue
 
             # Convert images to numpy arrays
-            depth_image = np.asanyarray(depth_frame.get_data())
-            color_image = np.asanyarray(color_frame.get_data())
-            mask = np.ones(color_frame.shape()[:2])
-            run_pose_estimation_worker(color_image, depth_image, K, est,ob_mask=mask)   
+            depth = np.asanyarray(depth_frame.get_data()).astype(np.float16)
+            depth = depth / np.max(depth) * 2.0
+            color = np.asanyarray(color_frame.get_data()).astype(np.float32) 
+
+            print(f"min/max color: {np.min(color)}, {np.max(color)}")
+            print(f"min/max depth: {np.min(depth)}, {np.max(depth)}")
+
+            pose = run_pose_estimation_worker(color, depth, K, est,opts,ob_mask=mask) 
+            mask=None  
+            center_pose = pose@np.linalg.inv(to_origin)
+            logging.info(f"Center pose: \n {center_pose}")
+            vis = draw_posed_3d_box(K, img=color, ob_in_cam=center_pose, bbox=bbox)
+            vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
+            cv2.imshow('1', vis[...,::-1])
+            cv2.waitKey(1)
     return run     
         
 def compute_mask(object, background, threshold=0.05):
     alpha = 1+threshold
-    result = np.hstack(((background > alpha * object) * 1.0 , (object < alpha* background) * 1.0))
-    cv2.imshow('RealSense', result * 1.0 )
-    cv2.waitKey(0)   
-    cv2.destroyAllWindows() 
     less,more = (background > alpha * object , object <  alpha* background) 
     diff = (np.max(more,axis=2) * 1.0 + np.max(less,axis=2) * 1.0) > 0
     return diff
@@ -165,5 +178,6 @@ if __name__ == '__main__':
     parser.add_argument('--ob_id', type=int,default=10)
     parser.add_argument('--debug', type=int, default=0)
     parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/debug')
+    parser.add_argument('--track_refine_iter', type=int, default=2)
     opts = parser.parse_args()
     run_with_pipeline(run_live_estimation(opts))
