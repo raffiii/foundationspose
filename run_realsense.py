@@ -47,7 +47,7 @@ def reset_cameras():
     print("reset done")
 
 
-def run_with_pipeline(function):
+def run_with_pipeline(function,opts):
     reset_cameras()
 
     # Configure depth and color streams
@@ -57,6 +57,7 @@ def run_with_pipeline(function):
     # Start streaming from the default RealSense camera
     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+    config.enable_record_to_file(f'{opts.debug_dir}/{opts.save_to}.bag')
 
     pipeline.start(config)
     result = None
@@ -95,53 +96,24 @@ def run_demo(pipeline):
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
+def run_with_bag(function, path):
+    # Configure depth and color streams
+    pipeline = rs.pipeline()
+    config = rs.config()
 
-# Precompute the model with run_ycbv/run_linemode in run_nerf.py
-def run_live_estimation(opts, device='cuda:0'):
-    mesh = get_reconstructed_mesh(opts.ob_id, opts.ref_view_dir)
-    est, to_origin, bbox = build_estimator(mesh,opts)
-    def run(pipeline):
-        mask = capture_mask(pipeline)
-        shape = mask.shape
-        mask = fix_mask(mask, np.vstack((np.zeros((shape[0]//2,shape[1])),np.ones((shape[0]-shape[0]//2,shape[1])))))
-    
-        profile = pipeline.get_active_profile()
-        color_stream = profile.get_stream(rs.stream.depth)
-        intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
-        K = np.array([[intrinsics.fx,0.0,intrinsics.ppx],[0.0,intrinsics.fy, intrinsics.ppy],[0.0,0.0,1.0]])
-        # mask = np.ones((intrinsics.height, intrinsics.width))
-        
-        #
-        torch.cuda.set_device(device)
-        est.to_device(device)
-        est.glctx = dr.RasterizeCudaContext(device=device)
+    # Start streaming from the default RealSense camera
+    config.enable_device_from_file("../object_detection.bag")
 
-        while(True):
-            frames = pipeline.wait_for_frames()
-            depth_frame = frames.get_depth_frame()
-            color_frame = frames.get_color_frame()
-
-            if not depth_frame or not color_frame:
-                continue
-
-            # Convert images to numpy arrays
-            depth = np.asanyarray(depth_frame.get_data()).astype(np.float16)
-            depth = depth / np.max(depth) * 4.0
-            color = np.asanyarray(color_frame.get_data()).astype(np.float32) 
-
-            print(f"min/max color: {np.min(color)}, {np.max(color)}")
-            print(f"min/max depth: {np.min(depth)}, {np.max(depth)}")
-
-            pose = run_pose_estimation_worker(color, depth, K, est,opts,ob_mask=mask) 
-            mask=None  
-            center_pose = pose@np.linalg.inv(to_origin)
-            logging.info(f"Center pose: \n {center_pose}")
-            vis = draw_posed_3d_box(K, img=color, ob_in_cam=center_pose, bbox=bbox)
-            vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
-            cv2.imshow('1', vis[...,::1])
-            cv2.waitKey(1)
-    return run     
-        
+    pipeline.start(config)
+    result = None
+    try:
+        result = function(pipeline)
+    finally:
+        # Stop streaming
+        pipeline.stop()
+        cv2.destroyAllWindows()
+    return result
+   
 def compute_mask(object, background, threshold=0.05):
     alpha = 1+threshold
     less,more = (background > alpha * object , object <  alpha* background) 
@@ -171,13 +143,76 @@ def show_mask():
     cv2.destroyAllWindows() 
 
     
+def mask(pipeline,opts):
+    mask = capture_mask(pipeline)
+    shape = mask.shape
+    mask = fix_mask(mask, np.vstack((np.zeros((shape[0]//2,shape[1])),np.ones((shape[0]-shape[0]//2,shape[1])))))
+    #np.save()
+    return mask
+    
+
+# Precompute the model with run_ycbv/run_linemode in run_nerf.py
+def run_live_estimation(opts, get_mask=mask, device='cuda:0'):
+    mesh = get_reconstructed_mesh(opts.ob_id, opts.ref_view_dir)
+    est, to_origin, bbox = build_estimator(mesh,opts)
+    def run(pipeline):
+        mask = get_mask(pipeline,opts)
+
+        profile = pipeline.get_active_profile()
+        color_stream = profile.get_stream(rs.stream.depth)
+        intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
+        K = np.array([[intrinsics.fx,0.0,intrinsics.ppx],[0.0,intrinsics.fy, intrinsics.ppy],[0.0,0.0,1.0]])
+        # mask = np.ones((intrinsics.height, intrinsics.width))
+        
+        #
+        torch.cuda.set_device(device)
+        est.to_device(device)
+        est.glctx = dr.RasterizeCudaContext(device=device)
+        poses = []
+
+        while(True):
+            frames = pipeline.wait_for_frames()
+            depth_frame = frames.get_depth_frame()
+            color_frame = frames.get_color_frame()
+
+            if not depth_frame or not color_frame:
+                continue
+
+            # Convert images to numpy arrays
+            depth = np.asanyarray(depth_frame.get_data()).astype(np.float16)
+            depth = depth / np.max(depth) * 4.0
+            color = np.asanyarray(color_frame.get_data()).astype(np.float32) 
+
+            print(f"min/max color: {np.min(color)}, {np.max(color)}")
+            print(f"min/max depth: {np.min(depth)}, {np.max(depth)}")
+
+            pose = run_pose_estimation_worker(color, depth, K, est,opts,ob_mask=mask) 
+            mask=None  
+            
+            center_pose = pose@np.linalg.inv(to_origin)
+            poses += [center_pose]
+            logging.info(f"Center pose: \n {center_pose}")
+            vis = draw_posed_3d_box(K, img=color, ob_in_cam=center_pose, bbox=bbox)
+            vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
+            cv2.imshow('1', vis[...,::1])
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        np.savez(f"{opts.debug_dir}/{opts.save_to}.npz",mask=mask, poses=np.concatenate(poses,axis=0))
+    return run     
+
+     
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--ref_view_dir', type=str, default='assets/banana/ref_views_16')
+    parser.add_argument('--recorded_path', type=str,default=None)
+    parser.add_argument('--save_to',type=str,default='test')
     parser.add_argument('--ob_id', type=int,default=10)
     parser.add_argument('--debug', type=int, default=0)
     parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/debug')
     parser.add_argument('--track_refine_iter', type=int, default=2)
     opts = parser.parse_args()
-    run_with_pipeline(run_live_estimation(opts))
+    if opts.recorded_path:
+        run_with_bag(run_live_estimation(opts),opts.recorded_path)
+    else:
+        run_with_pipeline(run_live_estimation(opts),opts)
