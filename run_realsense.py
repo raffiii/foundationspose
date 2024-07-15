@@ -151,10 +151,24 @@ def mask(pipeline,opts):
     return mask
     
 
+def parse_start_pose(path, est, mat):
+    if path is None:
+        return None
+    with open(path,'r') as f:
+        return parse_start_pose(f, est, mat)
+
+def parse_start_pose(pose, est, mat):
+    pose = np.load(pose)
+    return (pose @ mat) @ est.get_tf_to_centered_mesh() 
+
 # Precompute the model with run_ycbv/run_linemode in run_nerf.py
 def run_live_estimation(opts, get_mask=mask, device='cuda:0'):
     mesh = get_reconstructed_mesh(opts.ob_id, opts.ref_view_dir)
     est, to_origin, bbox = build_estimator(mesh,opts)
+    if opts.start_pose_path:
+        # set known start pose 
+        pose = parse_start_pose(opts.start_pose_path, est, opts.qrcode_translation)
+        est.pose_last = pose
     def run(pipeline):
         mask = get_mask(pipeline,opts)
 
@@ -199,7 +213,6 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0'):
                 break
         np.savez(f"{opts.debug_dir}/{opts.save_to}.npz",mask=mask, poses=np.concatenate(poses,axis=0))
     return run     
-
      
 
 if __name__ == '__main__':
@@ -211,6 +224,7 @@ if __name__ == '__main__':
     parser.add_argument('--debug', type=int, default=0)
     parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/debug')
     parser.add_argument('--track_refine_iter', type=int, default=2)
+    parser.add_argument('--start_pose_path', type=str, default=None)
     opts = parser.parse_args()
     if opts.recorded_path:
         run_with_bag(run_live_estimation(opts),opts.recorded_path)
