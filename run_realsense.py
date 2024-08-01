@@ -39,6 +39,10 @@ def build_estimator(mesh,opts):
 
 
 def reset_cameras():
+    """
+    Performs a hardware reset on realsense cameras
+    Try if cameras don't provide images until a timeout
+    """
     print("reset start")
     ctx = rs.context()
     devices = ctx.query_devices()
@@ -48,6 +52,10 @@ def reset_cameras():
 
 
 def run_with_pipeline(function,opts):
+    """
+    Runs the given `function` with a newly created realsense pipeline 
+    providing depth and color images and further options in `opts`
+    """
     reset_cameras()
 
     # Configure depth and color streams
@@ -70,6 +78,9 @@ def run_with_pipeline(function,opts):
     return result
 
 def run_demo(pipeline):
+    """
+    Only run realsense camera, included for debugging/test purposes
+    """
     while True:
         # Wait for a coherent pair of frames: depth and color
         frames = pipeline.wait_for_frames()
@@ -97,6 +108,9 @@ def run_demo(pipeline):
             break
 
 def run_with_bag(function, path):
+    """
+    Runs the function with a stored stream as a pipeline rather than a live feed
+    """
     # Configure depth and color streams
     pipeline = rs.pipeline()
     config = rs.config()
@@ -115,6 +129,10 @@ def run_with_bag(function, path):
     return result
    
 def compute_mask(object, background, threshold=0.05):
+    """
+    A heuristic to predict the object mask by using the difference between two 
+    images, without and with the object
+    """
     alpha = 1+threshold
     less,more = (background > alpha * object , object <  alpha* background) 
     diff = (np.max(more,axis=2) * 1.0 + np.max(less,axis=2) * 1.0) > 0
@@ -122,6 +140,9 @@ def compute_mask(object, background, threshold=0.05):
     
         
 def capture_mask(pipeline):
+    """
+    Capture the two images for the mask heuristic
+    """
     frames = pipeline.wait_for_frames()
     color_frame = frames.get_color_frame()
     background = np.asanyarray(color_frame.get_data())
@@ -132,9 +153,15 @@ def capture_mask(pipeline):
     return compute_mask(object_image,background)
 
 def fix_mask(mask,maskmask):
+    """
+    Fix the mask for noise in known background regions
+    """
     return (mask * 1.0) * (maskmask * 1.0)
 
 def show_mask():
+    """
+    Show a captured mask in cv2 imshow
+    """
     result = run_with_pipeline(capture_mask)
     shape = result.shape
     result = fix_mask(result, np.vstack((np.zeros((shape[0]//2,shape[1])),np.ones((shape[0]-shape[0]//2,shape[1])))))
@@ -144,6 +171,9 @@ def show_mask():
 
     
 def mask(pipeline,opts):
+    """
+    Capture and fix a mask using a heuristic
+    """
     mask = capture_mask(pipeline)
     shape = mask.shape
     mask = fix_mask(mask, np.vstack((np.zeros((shape[0]//2,shape[1])),np.ones((shape[0]-shape[0]//2,shape[1])))))
@@ -151,18 +181,27 @@ def mask(pipeline,opts):
     return mask
     
 
-def parse_start_pose(path, est, mat):
+def parse_start_pose_path(path, est, mat):
+    """
+    Parse the start pose from a known file
+    """
     if path is None:
         return None
     with open(path,'r') as f:
         return parse_start_pose(f, est, mat)
 
 def parse_start_pose(pose, est, mat):
+    """
+    Parse a pose to use as start pose
+    """
     pose = np.load(pose)
     return (pose @ mat) @ est.get_tf_to_centered_mesh() 
 
 # Precompute the model with run_ycbv/run_linemode in run_nerf.py
 def run_live_estimation(opts, get_mask=mask, device='cuda:0'):
+    """
+    Create a method to run the estimator with a pipeline, either live or a recorded stream
+    """
     mesh = get_reconstructed_mesh(opts.ob_id, opts.ref_view_dir)
     est, to_origin, bbox = build_estimator(mesh,opts)
     if opts.start_pose_path:
