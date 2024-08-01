@@ -18,7 +18,7 @@ def run_with_labeling_server(f):
     labelqueue = LabelQueue()
     server = LabelingServer(
         file_saver=labelqueue,
-        host="127.0.0.1", 
+        host="0.0.0.0", 
         port=8053
     )
     try:
