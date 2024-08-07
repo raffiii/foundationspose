@@ -5,9 +5,13 @@ import queue
 import argparse
 import numpy as np
 
+def oakd_intrinsics(device):
+    calibData = device.readCalibration()
+    intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_A)
+    return intrinsics
 
 # Function to stream from an OAK-D camera
-def stream_oakd(device_id, frame_q, stopper):
+def stream_oakd(device_id, frame_q, stopper, intrinsics):
     # Closer-in minimum depth, disparity range is doubled (from 95 to 190):
     extended_disparity = False
     # Better accuracy for longer distance, fractional disparity 32-levels:
@@ -66,6 +70,7 @@ def stream_oakd(device_id, frame_q, stopper):
     # with dai.Device(pipeline, device_info) as device:
 
     with dai.Device(pipeline,deviceInfo=device_info) as device:
+        intrinsics.put(oakd_intrinsics(device))
         # Output queue will be used to get the disparity frames from the outputs defined above
         q = device.getOutputQueue(name=f"disparity_{device_id}", maxSize=4, blocking=False)
         q_rgb = device.getOutputQueue(name=f"rgb_{device_id}", maxSize=4, blocking=False)
@@ -79,17 +84,25 @@ def stream_oakd(device_id, frame_q, stopper):
             in_rgb = q_rgb.get()
             rgb = in_rgb.getCvFrame()
             frame_q.put((rgb,frame))
-            print(f"Put frames for cam: {device_id}")
+            print(f"Put frames for cam: {device_id}", end="\r")
             
 
+def realsense_intrinsics(pipeline):
+    profile = pipeline.get_active_profile()
+    color_stream = profile.get_stream(rs.stream.depth)
+    intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
+    K = np.array([[intrinsics.fx,0.0,intrinsics.ppx],[0.0,intrinsics.fy, intrinsics.ppy],[0.0,0.0,1.0]])
+    return K
+
 # Function to stream from the RealSense camera
-def stream_realsense(frame_q, stopper):
+def stream_realsense(frame_q, stopper,intrinsics):
     pipeline = rs.pipeline()
     config = rs.config()
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
     pipeline.start(config)
     try:
+        intrinsics.put(realsense_intrinsics(pipeline))
         while stopper.empty():
             frames = pipeline.wait_for_frames()
             color_frame = frames.get_color_frame()
@@ -101,16 +114,14 @@ def stream_realsense(frame_q, stopper):
             depth = depth / np.max(depth) * 4.0
             color = np.asanyarray(color_frame.get_data()).astype(np.float32)[...,::-1].copy()
             frame_q.put((color,depth))
-            print(f"Put frames for cam: realsense")
+            print(f"Put frames for cam: realsense", end="\r")
     finally:
         pipeline.stop()
 
 
-
-
 def multistream(f=None, rslive=True,oakd=True):
     # create a queue to insert all queues in
-    qq = []
+    streams = []
     stopper = queue.Queue()
     
     threads = []
@@ -126,18 +137,20 @@ def multistream(f=None, rslive=True,oakd=True):
         # Create threads for each camera stream
         for device_id in oakd_device_ids:
             q = queue.Queue()
-            t = threading.Thread(target=stream_oakd, args=(device_id,q, stopper))
+            intrinsics = queue.Queue()
+            t = threading.Thread(target=stream_oakd, args=(device_id,q, stopper, intrinsics))
             threads.append(t)
-            qq.append(q)
+            streams.append({"frames":q,"intrinsics":intrinsics})
     if rslive:
         q = queue.Queue()
-        realsense_thread = threading.Thread(target=stream_realsense, args=(q,stopper))
+        intrinsics = queue.Queue()
+        realsense_thread = threading.Thread(target=stream_realsense, args=(q,stopper, intrinsics))
         threads.append(realsense_thread)
-        qq.append(q)
+        streams.append({"frames":q,"intrinsics":intrinsics})
 
     # Call the function consuming the frames
     if f:
-        threads.append(threading.Thread(target=f, args=(qq,)))
+        threads.append(threading.Thread(target=f, args=(streams,)))
 
     # Start the threads
     for t in threads:
