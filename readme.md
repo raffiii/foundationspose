@@ -1,3 +1,9 @@
+# Live Pose estimation based on FoundationPose
+- Use realsense and OAK-D camera streams for real-time input
+- Use real-time tracking provided by FoundationPose (infos below)
+
+---
+Original Project:
 # FoundationPose: Unified 6D Pose Estimation and Tracking of Novel Objects
 [[Paper]](https://arxiv.org/abs/2312.08344) [[Website]](https://nvlabs.github.io/FoundationPose/)
 
