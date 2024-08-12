@@ -1,6 +1,8 @@
 from estimater import *
 import streams
 import cv2
+import queue
+import time
 
 ##############################################################################
 # Pose estimamtion
@@ -52,14 +54,16 @@ def capture_mask(q):
     """
     Capture the two images for the mask heuristic
     """
-    background, _ = q.get()
-    cv2.imshow('1', background)
+    background = q.get()
+    cv2.imshow('1', background.color)
     cv2.waitKey(0)
     # Drop intermediate frames
     while not q.empty():
         q.get()
-    foreground, _ = q.get()
-    return compute_mask(foreground,background)
+    foreground = q.get()
+    while foreground.id != background.id:
+        foreground = q.get()
+    return compute_mask(foreground.color,background.color)
 
 def fix_mask(mask,maskmask):
     """
@@ -90,31 +94,33 @@ def build_runner(opts, get_mask=capture_mask, device='cuda:0'):
     #     # set known start pose 
     #     pose = parse_start_pose(opts.start_pose_path, est, opts.qrcode_translation)
     #     est.pose_last = pose
-    def run(stream):
-        stream=stream[0]
-        q = stream["frames"]
+    def get_next_with_id(q,id):
+        e = q.get()
+        while e.id!=id:
+            e=q.get()
+        return e
+    def run(q: queue.Queue,intrinsics: dict,ids: list, stopper: queue.Queue):
         mask = get_mask(q)
-        K = stream["intrinsics"].get()
+        while not all([i in intrinsics.keys() for i in ids]):
+           time.sleep(0.5)
+        i = ids[0]
+        K = intrinsics[i]
 
         torch.cuda.set_device(device)
         est.to_device(device)
         est.glctx = dr.RasterizeCudaContext(device=device)
         poses = []
-
-        while True:
-            color,depth = q.get()
-
-            print(f"min/max color: {np.min(color)}, {np.max(color)}")
-            print(f"min/max depth: {np.min(depth)}, {np.max(depth)}")
-
-            pose = run_pose_estimation_worker(color, depth, K, est,opts,ob_mask=mask) 
+        while stopper.empty():
+            f = get_next_with_id(q,i)
+            logging.info(f"Color shape: {f.color.shape} , Depth shape: {f.depth.shape} \n")
+            pose = run_pose_estimation_worker(f.color, f.depth, K, est,opts,ob_mask=mask) 
             mask=None  
             
             center_pose = pose@np.linalg.inv(to_origin)
             poses += [center_pose]
             logging.info(f"Center pose: \n {center_pose}")
-            vis = draw_posed_3d_box(K, img=color, ob_in_cam=center_pose, bbox=bbox)
-            vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
+            vis = draw_posed_3d_box(K, img=f.color, ob_in_cam=center_pose, bbox=bbox)
+            vis = draw_xyz_axis(f.color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
             cv2.imshow('1', vis[...,::1])
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
