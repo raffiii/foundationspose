@@ -199,7 +199,7 @@ def parse_start_pose(pose, est, mat):
     return (pose @ mat) @ est.get_tf_to_centered_mesh() 
 
 # Precompute the model with run_ycbv/run_linemode in run_nerf.py
-def run_live_estimation(opts, get_mask=mask, device='cuda:0'):
+def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
     """
     Create a method to run the estimator with a pipeline, either live or a recorded stream
     """
@@ -251,6 +251,9 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0'):
             cv2.imshow('1', vis[...,::1])
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
+            if saveFrame and cv2.waitKey(1) & 0xFF == ord('s'):
+                saveFrame(depth,color,center_pose)
+
         np.savez(f"{opts.debug_dir}/{opts.save_to}.npz",mask=mask, poses=np.concatenate(poses,axis=0))
     return run     
      
