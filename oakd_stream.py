@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-
-import argparse
-import threading
 from datetime import datetime, timedelta
 
 import cv2
@@ -12,16 +9,6 @@ from stream import CameraStream, DepthFrame, multistream
 # Weights to use when blending depth/rgb image (should equal 1.0)
 rgbWeight = 0.4
 depthWeight = 0.6
-
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "-alpha",
-    type=float,
-    default=None,
-    help="Alpha scaling parameter to increase float. [0,1] valid interval.",
-)
-args = parser.parse_args()
-alpha = args.alpha
 
 
 def oakd_intrinsics(device):
@@ -74,7 +61,6 @@ def run_oakd(
     camRgb.setResolution(rgbResolution)
     camRgb.setFps(fps)
 
-    
     left.setResolution(monoResolution)
     left.setCamera("left")
     left.setFps(fps)
@@ -98,11 +84,6 @@ def run_oakd(
     sync.out.link(demux.input)
     demux.outputs["rgb"].link(rgbOut.input)
     demux.outputs["depth"].link(disparityOut.input)
-
-    # camRgb.setMeshSource(dai.CameraProperties.WarpMeshSource.CALIBRATION)
-    if alpha is not None:
-        camRgb.setCalibrationAlpha(alpha)
-        stereo.setAlphaScaling(alpha)
 
     # Connect to device and start pipeline
     print(f"Connecting to OAK-D device {stream.cam_id}")
@@ -182,9 +163,11 @@ def show_images(stream: list):
             break
 
 
-def available_streams(num = -1):
+def available_streams(num=-1):
     return {
-        device.getMxId(): run_oakd for i,device in enumerate(dai.Device.getAllAvailableDevices()) if num > 0 and i < num
+        device.getMxId(): run_oakd
+        for i, device in enumerate(dai.Device.getAllAvailableDevices())
+        if num > 0 and i < num
     }
 
 

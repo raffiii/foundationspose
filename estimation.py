@@ -1,5 +1,5 @@
 from estimater import *
-import streams
+import stream, oakd_stream, realsense_stream
 import cv2
 import queue
 import time
@@ -139,4 +139,4 @@ if __name__ == '__main__':
     parser.add_argument('--track_refine_iter', type=int, default=2)
     parser.add_argument('--start_pose_path', type=str, default=None)
     opts = parser.parse_args()
-    streams.multistream(build_runner(opts),rslive=False)
+    stream.multistream(build_runner(opts), oakd_stream.available_streams())
