@@ -50,17 +50,18 @@ def compute_mask(object, background, threshold=0.05):
     return diff
     
         
-def capture_mask(q):
+def capture_mask(q, cam_id):
     """
     Capture the two images for the mask heuristic
     """
-    background = q.get()
-    cv2.imshow('1', background.color)
+    print("Capturing mask")
+    background = q.get()[cam_id]
+    cv2.imshow('Place object to track', background.color)
     cv2.waitKey(0)
     # Drop intermediate frames
     while not q.empty():
         q.get()
-    foreground = q.get()
+    foreground = q.get()[cam_id]
     while foreground.id != background.id:
         foreground = q.get()
     return compute_mask(foreground.color,background.color)
@@ -90,37 +91,27 @@ def build_runner(opts, get_mask=capture_mask, device='cuda:0'):
     """
     mesh = get_reconstructed_mesh(opts.ob_id, opts.ref_view_dir)
     est, to_origin, bbox = build_estimator(mesh,opts)
-    # if opts.start_pose_path:
-    #     # set known start pose 
-    #     pose = parse_start_pose(opts.start_pose_path, est, opts.qrcode_translation)
-    #     est.pose_last = pose
-    def get_next_with_id(q,id):
-        e = q.get()
-        while e.id!=id:
-            e=q.get()
-        return e
-    def run(q: queue.Queue,intrinsics: dict,ids: list, stopper: queue.Queue):
-        mask = get_mask(q)
-        while not all([i in intrinsics.keys() for i in ids]):
-           time.sleep(0.5)
-        i = ids[0]
-        K = intrinsics[i]
+
+    def run(streams, q, tracker=0):
+        tracker = streams[tracker]
+        mask = get_mask(q, tracker.cam_id)
 
         torch.cuda.set_device(device)
         est.to_device(device)
         est.glctx = dr.RasterizeCudaContext(device=device)
         poses = []
-        while stopper.empty():
-            f = get_next_with_id(q,i)
+        while tracker.running:
+            frames = q.get()
+            f = frames[tracker.cam_id]
             logging.info(f"Color shape: {f.color.shape} , Depth shape: {f.depth.shape} \n")
-            pose = run_pose_estimation_worker(f.color, f.depth, K, est,opts,ob_mask=mask) 
+            pose = run_pose_estimation_worker(f.color, f.depth, tracker.K, est,opts,ob_mask=mask) 
             mask=None  
             
             center_pose = pose@np.linalg.inv(to_origin)
             poses += [center_pose]
             logging.info(f"Center pose: \n {center_pose}")
-            vis = draw_posed_3d_box(K, img=f.color, ob_in_cam=center_pose, bbox=bbox)
-            vis = draw_xyz_axis(f.color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
+            vis = draw_posed_3d_box(tracker.K, img=f.color, ob_in_cam=center_pose, bbox=bbox)
+            vis = draw_xyz_axis(f.color, ob_in_cam=center_pose, scale=0.1, K=tracker.K, thickness=3, transparency=0, is_input_rgb=True)
             cv2.imshow('1', vis[...,::1])
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -139,4 +130,4 @@ if __name__ == '__main__':
     parser.add_argument('--track_refine_iter', type=int, default=2)
     parser.add_argument('--start_pose_path', type=str, default=None)
     opts = parser.parse_args()
-    stream.multistream(build_runner(opts), oakd_stream.available_streams())
+    stream.multistream_sync(build_runner(opts), oakd_stream.available_streams())

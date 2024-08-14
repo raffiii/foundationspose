@@ -167,7 +167,7 @@ def available_streams(num=-1):
     return {
         device.getMxId(): run_oakd
         for i, device in enumerate(dai.Device.getAllAvailableDevices())
-        if num > 0 and i < num
+        if num < 0 or i < num
     }
 
 
