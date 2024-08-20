@@ -3,6 +3,8 @@ import numpy as np
 import cv2
 import trimesh
 import argparse
+import time
+import logging
 
 from estimater import *
 
@@ -197,6 +199,16 @@ def parse_start_pose(pose, est, mat):
     pose = np.load(pose)
     return (pose @ mat) @ est.get_tf_to_centered_mesh() 
 
+def save_frame(color, depth, center_pose,bbox, opts):
+    logging.info("saving frame")
+    from pathlib import Path
+    path = f"{opts.debug_dir}/frames"
+    Path(path).mkdir(parents=True, exist_ok=True)
+    logging.info(f"Created path {path}")
+    np.savez(f"{path}/{round(time.time() * 1000)}.npz", color=color, depth=depth, center_pose=center_pose, bbox=bbox) 
+    logging.info("Frame saved!")
+
+
 # Precompute the model with run_ycbv/run_linemode in run_nerf.py
 def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
     """
@@ -250,9 +262,11 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
             cv2.imshow('1', vis[...,::1])
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
-            if saveFrame and cv2.waitKey(1) & 0xFF == ord('s'):
-                saveFrame(depth,color,center_pose)
+            if saveFrame is not None and cv2.waitKey(1) & 0xFF == ord('s'):
+                print("----------------- Saving Frame")
+                saveFrame(depth,color,center_pose,bbox,opts)
 
+        saveFrame(depth,color,center_pose,bbox,opts)
         np.savez(f"{opts.debug_dir}/{opts.save_to}.npz",mask=mask, poses=np.concatenate(poses,axis=0))
     return run     
      
@@ -271,4 +285,4 @@ if __name__ == '__main__':
     if opts.recorded_path:
         run_with_bag(run_live_estimation(opts),opts.recorded_path)
     else:
-        run_with_pipeline(run_live_estimation(opts),opts)
+        run_with_pipeline(run_live_estimation(opts, saveFrame=save_frame),opts)
