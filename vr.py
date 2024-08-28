@@ -3,6 +3,8 @@ import numpy as np
 from simpub.core.net_manager import init_net_manager, logger
 from simpub.xr_device.xr_device import XRDevice
 from functools import partial
+import argparse
+from scipy.spatial.transform import Rotation
 
 def send_point_cloud(self, point_data) -> None:
     self.request_socket.send_string(json.dumps(self.point_cloud_data))
@@ -18,16 +20,44 @@ def generate_point_cloud_data(rgb_image, depth_image):
             depth_pixel = depth_image[y, x]
             if random.random() > 0.1:
                 continue
-            positions.extend([-float(x / width), float(y / height), -float(depth_pixel)])
+            positions.extend([float(x / width), -float(y / height), float(depth_pixel)])
             colors.extend([int(rgb_pixel[0]) / 255, int(rgb_pixel[1]) / 255, int(rgb_pixel[2]) / 255, 1])
     return json.dumps({"positions": positions, "colors": colors})
 
 def get_bbox(msg, color = None, depth = None, folder = "debug", file = None):
     o = json.loads(msg)
-    center_pose = np.float64(o["center_pose"])
-    bbox = np.float64(o["bbox"])
+    logger.info(f"Got bbox msg: {o}")
+    data = o["data"][0]
+    pos = np.float64(data[:3])
+    rot = np.float64(data[3:7])
+    sca = np.float64(data[7:])
+    center_pose,bbox = from_quaternion(pos,rot,sca)
     if file is not None:
-        np.savez(f"{folder}/labeled/{file}", color = color, depth = depth, bbox = bbox, center_pose = center_pose)
+        from pathlib import Path
+        path = f"{folder}/labeled"
+        Path(path).mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created path {path}")
+        np.savez(f"{path}/{file}", color = color, depth = depth, bbox = bbox, center_pose = center_pose)
+
+def from_quaternion(translation,quaternion,local_scale):
+    S = np.diag(local_scale)
+    T = np.eye(4)
+    T[:3,3] = translation
+    R = Rotation.from_quat(quaternion).as_matrix()
+    T[:3, :3] = R
+    T[:3, :3] *= S
+    S = np.float64(local_scale)
+    S/=2
+    return T, np.float64([S,-S])
+
+def to_quaternion(T,S):
+    T,S = np.float64(T), np.float64(S)
+    s = S[0] - S[1]
+    t = T[:3,3]
+    r = T[:3,:3] 
+    local_scale = np.linalg.norm(r)
+    r = r/local_scale
+    q = Rotation.from_matrix(r).as_quat()
 
 
 
@@ -47,5 +77,10 @@ def send_saved_point_cloud(folder,file):
     net_manager.join()
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("path")
+    parser.add_argument("file")
+    opts = parser.parse_args()
 
-    send_saved_point_cloud("debug/frames","1724146523748.npz")
+    send_saved_point_cloud(opts.path, opts.file)
+    #send_saved_point_cloud("debug/frames","1724146523748.npz")
