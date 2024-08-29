@@ -65,6 +65,7 @@ def run_pose_estimation_worker(reader, i_frames, est:FoundationPose, debug=False
     ob_mask = get_mask(reader, i_frame, ob_id, detect_type=detect_type)
 
     est.gt_pose = reader.get_gt_pose(i_frame, ob_id)
+    
     pose = est.register(K=reader.K, rgb=color, depth=depth, ob_mask=ob_mask, ob_id=ob_id, iteration=5)
     logging.info(f"pose:\n{pose}")
 

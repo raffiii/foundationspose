@@ -10,15 +10,20 @@ from estimater import *
 
 
 def run_pose_estimation_worker(color, depth,K, est:FoundationPose,opts, ob_mask=None, debug=0, ob_id=None, device='cuda:0'):
-  
-
   if ob_mask is not None:
+    logging.info("Registering object")
     pose = est.register(K=K, rgb=color, depth=depth, ob_mask=ob_mask)
     logging.info(f"pose:\n{pose}")
+    return pose
   else:
-    pose = est.track_one(rgb=color, depth=depth, K=K, iteration=opts.track_refine_iter)
+    logging.info("Tracking registered object")
+    try:
+        pose = est.track_one(rgb=color, depth=depth, K=K, iteration=opts.track_refine_iter)
+        return pose
+    except:
+        logging.warn("pose tracking failed")
+    return None
 
-  return pose
 
 
 def get_reconstructed_mesh(ob_id, ref_view_dir):
@@ -69,17 +74,19 @@ def run_with_pipeline(function,opts):
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
     config.enable_record_to_file(f'{opts.debug_dir}/{opts.save_to}.bag')
 
-    pipeline.start(config)
+    profile = pipeline.start(config)
+    depth_sensor = profile.get_device().first_depth_sensor()
+    depth_scale = depth_sensor.get_depth_scale()
     result = None
     try:
-        result = function(pipeline)
+        result = function(pipeline, depth_scale=depth_scale)
     finally:
         # Stop streaming
         pipeline.stop()
         cv2.destroyAllWindows()
     return result
 
-def run_demo(pipeline):
+def run_demo(pipeline,**kwargs):
     """
     Only run realsense camera, included for debugging/test purposes
     """
@@ -205,7 +212,7 @@ def save_frame(color, depth, center_pose,bbox, opts):
     path = f"{opts.debug_dir}/frames/{opts.ob_name}"
     Path(path).mkdir(parents=True, exist_ok=True)
     logging.info(f"Created path {path}")
-    np.savez(f"{path}/{round(time.time() * 1000)}.npz", color=color, depth=depth, center_pose=center_pose, bbox=bbox) 
+    np.savez(f"{path}/{round(time.time() * 1000)}.npz", color=color[...,::-1], depth=depth, center_pose=center_pose, bbox=bbox) 
     logging.info("Frame saved!")
 
 
@@ -220,8 +227,9 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
         # set known start pose 
         pose = parse_start_pose(opts.start_pose_path, est, opts.qrcode_translation)
         est.pose_last = pose
-    def run(pipeline):
+    def run(pipeline, depth_scale=4.0):
         mask = get_mask(pipeline,opts)
+        cv2.imshow("mask", mask,)
 
         profile = pipeline.get_active_profile()
         color_stream = profile.get_stream(rs.stream.depth)
@@ -234,39 +242,58 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
         est.to_device(device)
         est.glctx = dr.RasterizeCudaContext(device=device)
         poses = []
+        rgbWeight = 0.75
 
+        align_to = rs.stream.color
+        align = rs.align(align_to)
         while(True):
-            frames = pipeline.wait_for_frames()
+            # Getting a frame from the realsense camera
+            raw_frames = pipeline.wait_for_frames()
+            
+            frames =    align.process(raw_frames)
             depth_frame = frames.get_depth_frame()
             color_frame = frames.get_color_frame()
 
             if not depth_frame or not color_frame:
                 continue
 
-            # Convert images to numpy arrays
-            depth = np.asanyarray(depth_frame.get_data()).astype(np.float16)
-            depth = depth / np.max(depth) * 4.0
-            color = np.asanyarray(color_frame.get_data()).astype(np.float32) 
+            # Convert images to numpy arrays and apply necessary transformations
+            raw_depth = np.asanyarray(depth_frame.get_data()).astype(np.float16)
+            #depth = depth / np.max(depth) * 4.0
+            depth = raw_depth / depth_scale
 
-            print(f"min/max color: {np.min(color)}, {np.max(color)}")
-            print(f"min/max depth: {np.min(depth)}, {np.max(depth)}")
+            color = np.uint8(color_frame.get_data()).astype(np.float32, casting='safe') 
 
+            cv2.imshow('color', color)
+            if len(depth.shape) < 3:
+               show_depth = cv2.applyColorMap(cv2.convertScaleAbs(raw_depth, alpha=0.03), cv2.COLORMAP_JET)
+            blended = cv2.addWeighted(color, 1-rgbWeight, show_depth, rgbWeight, 0)
+            cv2.imshow('blended', blended)
+            cv2.imshow('depth', show_depth)
+
+            # run the pose estimation
             pose = run_pose_estimation_worker(color, depth, K, est,opts,ob_mask=mask) 
             mask=None  
-            
-            center_pose = pose@np.linalg.inv(to_origin)
-            poses += [center_pose]
-            logging.info(f"Center pose: \n {center_pose}")
-            vis = draw_posed_3d_box(K, img=color, ob_in_cam=center_pose, bbox=bbox)
-            vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
-            cv2.imshow('1', vis[...,::1])
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-            if saveFrame is not None and cv2.waitKey(1) & 0xFF == ord('s'):
-                print("----------------- Saving Frame")
+            if pose is not None:
+                center_pose = pose@np.linalg.inv(to_origin)
+                poses += [center_pose]
+                logging.info(f"Center pose: \n {center_pose}")
+            else:
+                center_pose = None
+            # Save frame if user presses the 's' key
+            key = cv2.waitKey(1) 
+            if saveFrame is not None and key & 0xFF == ord('s'):
+                logging.info("----------------- Saving Frame")
                 saveFrame(depth,color,center_pose,bbox,opts)
-
-        saveFrame(depth,color,center_pose,bbox,opts)
+            # visualize the scene
+            if center_pose is not None:
+                vis = draw_posed_3d_box(K, img=color, ob_in_cam=center_pose, bbox=bbox)
+                vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
+                cv2.imshow('1', vis)
+            if key & 0xFF == ord('q'):
+                break
+        if saveFrame:
+            saveFrame(color,depth,center_pose,bbox,opts)
         np.savez(f"{opts.debug_dir}/{opts.save_to}.npz",mask=mask, poses=np.concatenate(poses,axis=0))
     return run     
 
@@ -286,14 +313,14 @@ def run_capture(opts):
         depth = depth / np.max(depth) * 4.0
         color = np.asanyarray(color_frame.get_data()).astype(np.float32)
 
-        save_frame(depth,color,np.zeros(0),np.zeros(0),opts)
+        save_frame(color,depth,np.zeros(0),np.zeros(0),opts)
     return run
 
      
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--ref_view_dir', type=str, default='assets/banana/ref_views_16')
+    parser.add_argument('--ref_view_dir', type=str, default='assets/YCBV/ref_views_16')
     parser.add_argument('--recorded_path', type=str,default=None)
     parser.add_argument('--save_to',type=str,default='test')
     parser.add_argument('--ob_id', type=int,default=10)
@@ -303,13 +330,17 @@ if __name__ == '__main__':
     parser.add_argument('--start_pose_path', type=str, default=None)
     parser.add_argument('--ob_name', type=str, default=None)
     parser.add_argument('-c','--capture', action='store_true')
+    parser.add_argument('--demo',default=False)
     opts = parser.parse_args()
     if opts.ob_name is None:
         opts.ob_name = opts.ob_id
     if opts.capture:
         run_with_pipeline(run_capture(opts),opts)
+    elif opts.demo:
+        run_with_pipeline(run_demo,opts)
     else:
         if opts.recorded_path:
             run_with_bag(run_live_estimation(opts),opts.recorded_path)
         else:
             run_with_pipeline(run_live_estimation(opts, saveFrame=save_frame),opts)
+        

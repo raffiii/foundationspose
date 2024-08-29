@@ -1,3 +1,4 @@
+import logging
 import queue
 import threading
 from contextlib import ExitStack
@@ -76,9 +77,12 @@ def multistream_sync(f, cameras = {}):
     q = queue.Queue()
 
     def sync(streams, q):
+        logging.info("Started")
         while all([s.running for s in streams]):
-            if not any([s.queue.empty for s in streams]):
+            #print([s.queue.empty() for s in streams])
+            if not any([s.queue.empty() for s in streams]):
                 q.put({s.cam_id: s.get() for s in streams})
+        logging.info("Exiting sync")
 
     with ExitStack() as stack:
         for cam_id, cam_f in cameras.items():
@@ -88,14 +92,12 @@ def multistream_sync(f, cameras = {}):
             threads.append(thread)
             streams.append(stream)
 
-        t = threading.Thread(target=f, args=(streams,q))
-        threads.append(t)
         s = threading.Thread(target=sync, args = (streams,q))
         threads.append(s)
         print(f"Starting {len(streams)} cameras and {len(threads)} threads in total")
 
         for t in threads:
             t.start()
-        
+        f(streams,q)
         for t in threads:
             t.join()

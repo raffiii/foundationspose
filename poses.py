@@ -8,6 +8,7 @@ import time
 # Pose estimamtion
 
 def run_pose_estimation_worker(color, depth,K, est:FoundationPose,opts, ob_mask=None, debug=0, ob_id=None, device='cuda:0'):
+  logging.info("--------------- Called run worker")
   if ob_mask is not None:
     pose = est.register(K=K, rgb=color, depth=depth, ob_mask=ob_mask)
     logging.info(f"pose:\n{pose}")
@@ -54,10 +55,14 @@ def capture_mask(q, cam_id):
     """
     Capture the two images for the mask heuristic
     """
-    print("Capturing mask")
+    logging.info("Capturing mask")
     background = q.get()[cam_id]
-    cv2.imshow('Place object to track', background.color)
+    #input('-' * 40 + "Place object and hit enter:")
+    #cv2.namedWindow('Object_place', cv2.WINDOW_NORMAL)
+    #logging.info("Waiting for object placement")
+    cv2.imshow('Object_place', background.color)
     cv2.waitKey(0)
+    cv2.destroyAllWindows()
     # Drop intermediate frames
     while not q.empty():
         q.get()
@@ -104,6 +109,7 @@ def build_runner(opts, get_mask=capture_mask, device='cuda:0'):
             frames = q.get()
             f = frames[tracker.cam_id]
             logging.info(f"Color shape: {f.color.shape} , Depth shape: {f.depth.shape} \n")
+            logging.info(f"Intrinsics (K): {[s.K for s in streams]}")
             pose = run_pose_estimation_worker(f.color, f.depth, tracker.K, est,opts,ob_mask=mask) 
             mask=None  
             
@@ -130,4 +136,4 @@ if __name__ == '__main__':
     parser.add_argument('--track_refine_iter', type=int, default=2)
     parser.add_argument('--start_pose_path', type=str, default=None)
     opts = parser.parse_args()
-    stream.multistream_sync(build_runner(opts), oakd_stream.available_streams())
+    stream.multistream_sync(build_runner(opts), oakd_stream.available_streams(1))

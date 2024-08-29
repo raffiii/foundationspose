@@ -35,6 +35,7 @@ def run_oakd(
     monoResolution=dai.MonoCameraProperties.SensorResolution.THE_480_P,
     rgbResolution=dai.ColorCameraProperties.SensorResolution.THE_1080_P,
     rgbCamSocket=dai.CameraBoardSocket.CAM_A,
+    f=None
 ):
     # Create pipeline
     pipeline = dai.Pipeline()
@@ -89,7 +90,7 @@ def run_oakd(
     print(f"Connecting to OAK-D device {stream.cam_id}")
     device_info = dai.DeviceInfo(stream.cam_id)
     with dai.Device(pipeline, deviceInfo=device_info) as device:
-        stream.K = oakd_intrinsics(device)
+        stream.K = np.asanyarray(oakd_intrinsics(device))
         # For now, RGB needs fixed focus to properly align with depth.
         # This value was used during calibration
         try:
@@ -122,13 +123,14 @@ def run_oakd(
                 if 1:
                     frameDisp = (frameDisp * 255.0 / maxDisparity).astype(np.uint8)
                 # Optional, apply false colorization
-                if 1:
+                if 0:
                     frameDisp = cv2.applyColorMap(frameDisp, cv2.COLORMAP_HOT)
                 frameDisp = np.ascontiguousarray(frameDisp)
             if frameRgb is not None and frameDisp is not None:
                 frame = DepthFrame(frameRgb, frameDisp, datetime.now(), stream.cam_id)
                 stream.queue.put(frame)
-                print(f"Put frame in queue at {frame.time}", end="\r")
+                #print(f"Put frame in queue at {frame.time}, queue has size {stream.queue.qsize()}", end="\r")
+                
                 frameRgb = None
                 frameDisp = None
             else:
