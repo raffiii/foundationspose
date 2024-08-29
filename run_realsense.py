@@ -202,7 +202,7 @@ def parse_start_pose(pose, est, mat):
 def save_frame(color, depth, center_pose,bbox, opts):
     logging.info("saving frame")
     from pathlib import Path
-    path = f"{opts.debug_dir}/frames"
+    path = f"{opts.debug_dir}/frames/{opts.ob_name}"
     Path(path).mkdir(parents=True, exist_ok=True)
     logging.info(f"Created path {path}")
     np.savez(f"{path}/{round(time.time() * 1000)}.npz", color=color, depth=depth, center_pose=center_pose, bbox=bbox) 
@@ -269,6 +269,26 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
         saveFrame(depth,color,center_pose,bbox,opts)
         np.savez(f"{opts.debug_dir}/{opts.save_to}.npz",mask=mask, poses=np.concatenate(poses,axis=0))
     return run     
+
+def run_capture(opts):
+    def run(pipeline):
+        while True:
+            frames = pipeline.wait_for_frames()
+            depth_frame = frames.get_depth_frame()
+            color_frame = frames.get_color_frame()
+
+            if not depth_frame or not color_frame:
+                continue
+            break
+
+        # Convert images to numpy arrays
+        depth = np.asanyarray(depth_frame.get_data()).astype(np.float16)
+        depth = depth / np.max(depth) * 4.0
+        color = np.asanyarray(color_frame.get_data()).astype(np.float32)
+
+        save_frame(depth,color,np.zeros(0),np.zeros(0),opts)
+    return run
+
      
 
 if __name__ == '__main__':
@@ -281,8 +301,15 @@ if __name__ == '__main__':
     parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/debug')
     parser.add_argument('--track_refine_iter', type=int, default=2)
     parser.add_argument('--start_pose_path', type=str, default=None)
+    parser.add_argument('--ob_name', type=str, default=None)
+    parser.add_argument('-c','--capture', action='store_true')
     opts = parser.parse_args()
-    if opts.recorded_path:
-        run_with_bag(run_live_estimation(opts),opts.recorded_path)
+    if opts.ob_name is None:
+        opts.ob_name = opts.ob_id
+    if opts.capture:
+        run_with_pipeline(run_capture(opts),opts)
     else:
-        run_with_pipeline(run_live_estimation(opts, saveFrame=save_frame),opts)
+        if opts.recorded_path:
+            run_with_bag(run_live_estimation(opts),opts.recorded_path)
+        else:
+            run_with_pipeline(run_live_estimation(opts, saveFrame=save_frame),opts)
