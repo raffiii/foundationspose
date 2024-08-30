@@ -5,6 +5,7 @@ import trimesh
 import argparse
 import time
 import logging
+import vr
 
 from estimater import *
 
@@ -206,15 +207,22 @@ def parse_start_pose(pose, est, mat):
     pose = np.load(pose)
     return (pose @ mat) @ est.get_tf_to_centered_mesh() 
 
-def save_frame(color, depth, center_pose,bbox, opts):
+def save_frame(color, depth, center_pose,bbox, opts,sub_dir = "frames"):
     logging.info("saving frame")
     from pathlib import Path
-    path = f"{opts.debug_dir}/frames/{opts.ob_name}"
+    path = f"{opts.debug_dir}/{sub_dir}/{opts.ob_name}"
     Path(path).mkdir(parents=True, exist_ok=True)
     logging.info(f"Created path {path}")
     np.savez(f"{path}/{round(time.time() * 1000)}.npz", color=color[...,::-1], depth=depth, center_pose=center_pose, bbox=bbox) 
     logging.info("Frame saved!")
 
+
+def send_vr(color, depth, opts):
+    net_manager = None
+    def save(bbox, center_pose):
+        net_manager.stop_server()
+        save_frame(color, depth, center_pose, bbox, opts, sub_dir="frames/labeled")
+    vr.send_live_point_cloud(opts.simpublish_ip,color, depth, save)
 
 # Precompute the model with run_ycbv/run_linemode in run_nerf.py
 def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
@@ -246,6 +254,8 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
 
         align_to = rs.stream.color
         align = rs.align(align_to)
+
+
         while(True):
             # Getting a frame from the realsense camera
             raw_frames = pipeline.wait_for_frames()
@@ -260,7 +270,7 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
             # Convert images to numpy arrays and apply necessary transformations
             raw_depth = np.asanyarray(depth_frame.get_data()).astype(np.float16)
             #depth = depth / np.max(depth) * 4.0
-            depth = raw_depth / depth_scale
+            depth = raw_depth * depth_scale
 
             color = np.uint8(color_frame.get_data()).astype(np.float32, casting='safe') 
 
@@ -285,6 +295,8 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
             if saveFrame is not None and key & 0xFF == ord('s'):
                 logging.info("----------------- Saving Frame")
                 saveFrame(depth,color,center_pose,bbox,opts)
+            if key & 0xFF == ord('v'):
+                send_vr(color, depth, opts)
             # visualize the scene
             if center_pose is not None:
                 vis = draw_posed_3d_box(K, img=color, ob_in_cam=center_pose, bbox=bbox)
@@ -330,6 +342,7 @@ if __name__ == '__main__':
     parser.add_argument('--start_pose_path', type=str, default=None)
     parser.add_argument('--ob_name', type=str, default=None)
     parser.add_argument('-c','--capture', action='store_true')
+    parser.add_argument('--simpublish_ip', default=None)
     parser.add_argument('--demo',default=False)
     opts = parser.parse_args()
     if opts.ob_name is None:
