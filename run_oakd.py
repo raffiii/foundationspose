@@ -44,99 +44,6 @@ def build_estimator(mesh,opts):
     logging.info("estimator initialization done")
     return est, to_origin, bbox, 
 
-
-def reset_cameras():
-    """
-    Performs a hardware reset on realsense cameras
-    Try if cameras don't provide images until a timeout
-    """
-    print("reset start")
-    ctx = rs.context()
-    devices = ctx.query_devices()
-    for dev in devices:
-        dev.hardware_reset()
-    print("reset done")
-
-
-def run_with_pipeline(function,opts):
-    """
-    Runs the given `function` with a newly created realsense pipeline 
-    providing depth and color images and further options in `opts`
-    """
-    reset_cameras()
-
-    # Configure depth and color streams
-    pipeline = rs.pipeline()
-    config = rs.config()
-
-    # Start streaming from the default RealSense camera
-    config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-    config.enable_record_to_file(f'{opts.debug_dir}/{opts.save_to}.bag')
-
-    profile = pipeline.start(config)
-    depth_sensor = profile.get_device().first_depth_sensor()
-    depth_scale = depth_sensor.get_depth_scale()
-    result = None
-    try:
-        result = function(pipeline, depth_scale=depth_scale)
-    finally:
-        # Stop streaming
-        pipeline.stop()
-        cv2.destroyAllWindows()
-    return result
-
-def run_demo(pipeline,**kwargs):
-    """
-    Only run realsense camera, included for debugging/test purposes
-    """
-    while True:
-        # Wait for a coherent pair of frames: depth and color
-        frames = pipeline.wait_for_frames()
-        depth_frame = frames.get_depth_frame()
-        color_frame = frames.get_color_frame()
-        
-        if not depth_frame or not color_frame:
-            continue
-
-        # Convert images to numpy arrays
-        depth_image = np.asanyarray(depth_frame.get_data())
-        color_image = np.asanyarray(color_frame.get_data())
-
-        # Apply colormap on depth image (image must be converted to 8-bit per pixel first)
-        depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
-
-        # Stack both images horizontally
-        images = np.hstack((color_image, depth_colormap))
-
-        # Show images
-        cv2.imshow('RealSense', images)
-
-        # Break the loop on 'q' key press
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-def run_with_bag(function, path):
-    """
-    Runs the function with a stored stream as a pipeline rather than a live feed
-    """
-    # Configure depth and color streams
-    pipeline = rs.pipeline()
-    config = rs.config()
-
-    # Start streaming from the default RealSense camera
-    config.enable_device_from_file("../object_detection.bag")
-
-    pipeline.start(config)
-    result = None
-    try:
-        result = function(pipeline)
-    finally:
-        # Stop streaming
-        pipeline.stop()
-        cv2.destroyAllWindows()
-    return result
-   
 def compute_mask(object, background, threshold=0.05):
     """
     A heuristic to predict the object mask by using the difference between two 
@@ -206,22 +113,15 @@ def parse_start_pose(pose, est, mat):
     pose = np.load(pose)
     return (pose @ mat) @ est.get_tf_to_centered_mesh() 
 
-def save_frame(color, depth, center_pose,bbox, opts,sub_dir = "frames"):
+def save_frame(color, depth, center_pose,bbox, opts):
     logging.info("saving frame")
     from pathlib import Path
-    path = f"{opts.debug_dir}/{sub_dir}/{opts.ob_name}"
+    path = f"{opts.debug_dir}/frames/{opts.ob_name}"
     Path(path).mkdir(parents=True, exist_ok=True)
     logging.info(f"Created path {path}")
     np.savez(f"{path}/{round(time.time() * 1000)}.npz", color=color[...,::-1], depth=depth, center_pose=center_pose, bbox=bbox) 
     logging.info("Frame saved!")
 
-
-def send_vr(color, depth, opts):
-    net_manager = None
-    def save(bbox, center_pose):
-        net_manager.stop_server()
-        save_frame(color, depth, center_pose, bbox, opts, sub_dir="frames/labeled")
-    vr.send_live_point_cloud(opts.simpublish_ip,color, depth, save)
 
 # Precompute the model with run_ycbv/run_linemode in run_nerf.py
 def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
@@ -234,9 +134,17 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
         # set known start pose 
         pose = parse_start_pose(opts.start_pose_path, est, opts.qrcode_translation)
         est.pose_last = pose
-    def run(pipeline, depth_scale=4.0):
+    mask = None
+    background = None
+    init = False
+    def frame(color, depth, K):
+        if not init:
+            background = color
+            init = True
+            return
+        if background is not None:
+            
         mask = get_mask(pipeline,opts)
-        cv2.imshow("mask", mask,)
 
         profile = pipeline.get_active_profile()
         color_stream = profile.get_stream(rs.stream.depth)
@@ -253,8 +161,6 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
 
         align_to = rs.stream.color
         align = rs.align(align_to)
-
-
         while(True):
             # Getting a frame from the realsense camera
             raw_frames = pipeline.wait_for_frames()
@@ -267,15 +173,13 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
                 continue
 
             # Convert images to numpy arrays and apply necessary transformations
-            raw_depth = np.asanyarray(depth_frame.get_data())
-            #depth = raw_depth / np.max(raw_depth) * 4.0
-            depth = raw_depth * depth_scale
-
-            color = np.uint8(color_frame.get_data())
-
+            logging.info(f"Scale: {depth_scale}, raw_max: {1/np.max(np.asanyarray(depth_frame.get_data())) * 4.0}")
+            depth = np.asanyarray(depth_frame.get_data()).astype(np.float64)
+            depth = depth / depth_scale
+            color = np.asanyarray(color_frame.get_data()).astype(np.float32) 
 
             # run the pose estimation
-            pose = run_pose_estimation_worker(color[...,::-1].copy(), depth, K, est,opts,ob_mask=mask) 
+            pose = run_pose_estimation_worker(color, depth, K, est,opts,ob_mask=mask) 
             mask=None  
             if pose is not None:
                 center_pose = pose@np.linalg.inv(to_origin)
@@ -283,29 +187,21 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
                 logging.info(f"Center pose: \n {center_pose}")
             else:
                 center_pose = None
-            
-            cv2.imshow('color', color)
-            vis_base = color
-            if opts.show_depth:
-                if len(depth.shape) < 3:
-                   show_depth = cv2.applyColorMap(cv2.convertScaleAbs(raw_depth, alpha=.1, beta=10), cv2.COLORMAP_JET)
-                blended = cv2.addWeighted(color, 1-rgbWeight, show_depth, rgbWeight, 0)
-                #cv2.imshow('blended', blended)
-                #cv2.imshow('depth', show_depth)
-                vis_base = blended
             # Save frame if user presses the 's' key
-            key = cv2.waitKey(1) 
-            if saveFrame is not None and key & 0xFF == ord('s'):
+            if saveFrame is not None and cv2.waitKey(1) & 0xFF == ord('s'):
                 logging.info("----------------- Saving Frame")
                 saveFrame(depth,color,center_pose,bbox,opts)
-            if opts.simpublish_ip is not None and key & 0xFF == ord('v'):
-                send_vr(color, depth, opts)
             # visualize the scene
-            if center_pose is not None:
-                vis = draw_posed_3d_box(K, img=vis_base, ob_in_cam=center_pose, bbox=bbox)
-                vis = draw_xyz_axis(vis_base, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
-                cv2.imshow('1', vis)
-            if key & 0xFF == ord('q'):
+            #vis = draw_posed_3d_box(K, img=color, ob_in_cam=center_pose, bbox=bbox)
+            #vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)
+            
+            if len(depth.shape) < 3:
+                depth = cv2.cvtColor(np.float32(depth), cv2.COLOR_GRAY2BGR)
+            blended = cv2.addWeighted(color, 1-rgbWeight, depth, rgbWeight, 0)
+            cv2.imshow('blended', blended)
+            cv2.imshow('color', color)
+            cv2.imshow('depth', depth)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
         if saveFrame:
             saveFrame(color,depth,center_pose,bbox,opts)
@@ -335,7 +231,7 @@ def run_capture(opts):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--ref_view_dir', type=str, default='assets/YCBV/ref_views_16')
+    parser.add_argument('--ref_view_dir', type=str, default='assets/banana/ref_views_16')
     parser.add_argument('--recorded_path', type=str,default=None)
     parser.add_argument('--save_to',type=str,default='test')
     parser.add_argument('--ob_id', type=int,default=10)
@@ -345,25 +241,13 @@ if __name__ == '__main__':
     parser.add_argument('--start_pose_path', type=str, default=None)
     parser.add_argument('--ob_name', type=str, default=None)
     parser.add_argument('-c','--capture', action='store_true')
-    parser.add_argument('-i', '--simpublish_ip', default=None)
-    parser.add_argument('--demo',default=False)
-    parser.add_argument('--show_depth', default=False, action='store_true')
     opts = parser.parse_args()
     if opts.ob_name is None:
         opts.ob_name = opts.ob_id
-    if opts.simpublish_ip is not None:
-        import vr
     if opts.capture:
         run_with_pipeline(run_capture(opts),opts)
-    elif opts.demo:
-        run_with_pipeline(run_demo,opts)
     else:
         if opts.recorded_path:
             run_with_bag(run_live_estimation(opts),opts.recorded_path)
         else:
             run_with_pipeline(run_live_estimation(opts, saveFrame=save_frame),opts)
-        
-# Example Usage:
-"""
-python run_realsense.py --show_depth --ob_id 14 -i 10.10.10.220
-"""

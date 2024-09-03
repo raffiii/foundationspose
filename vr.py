@@ -1,7 +1,7 @@
 import json, random
 import numpy as np
-from simpub.core.net_manager import init_net_manager, logger
-from simpub.xr_device.xr_device import XRDevice
+from SimPublisher.simpub.core.net_manager import init_net_manager, logger
+from SimPublisher.simpub.xr_device.xr_device import XRDevice
 from functools import partial
 import argparse
 from scipy.spatial.transform import Rotation
@@ -37,7 +37,7 @@ def get_bbox(msg, use_bbox):
     rot = np.float64(data[3:7])
     sca = np.float64(data[7:])
     center_pose, bbox = from_quaternion(pos, rot, sca)
-    use_bbox(bbox, center_pose)
+    use_bbox(bbox=bbox, center_pose=center_pose)
 
 def save_bbox(color, depth, bbox, center_pose, folder, file):
     if file is not None:
@@ -80,9 +80,9 @@ def to_quaternion(T, S):
 def send_saved_point_cloud(folder, file):
     path = f"{folder}/{file}"
     data = np.load(path)
-    color = data["depth"][..., ::-1]
-    depth = data["color"]
-    net_manager = init_net_manager("192.168.0.134")
+    color = data["color"]
+    depth = data["depth"]
+    net_manager = init_net_manager("10.10.10.220")
     unity_editor = XRDevice("ALRMetaQuest3")
     use_bbox = partial(save_bbox, color=color, depth=depth, folder=folder, file=file)
     unity_editor.register_topic_callback(
@@ -103,11 +103,11 @@ def send_point_cloud(net_manager, unity_editor, color, depth):
 def send_live_point_cloud(ip,color, depth, use_bbox):
     net_manager = init_net_manager(ip)
     unity_editor = XRDevice("ALRMetaQuest3")
+    send_point_cloud(net_manager, unity_editor, color, depth)
     unity_editor.register_topic_callback(
         "bbox_submission",
         partial(get_bbox, use_bbox=use_bbox),
     )
-    send_point_cloud(net_manager, unity_editor, color, depth)
     return net_manager
     
 
