@@ -77,12 +77,14 @@ def to_quaternion(T, S):
     q = Rotation.from_matrix(r).as_quat()
 
 
-def send_saved_point_cloud(folder, file):
+def send_saved_point_cloud(folder, file, ip):
     path = f"{folder}/{file}"
     data = np.load(path)
     color = data["color"]
     depth = data["depth"]
-    net_manager = init_net_manager("10.10.10.220")
+    #net_manager = init_net_manager("10.10.10.220")
+    net_manager = init_net_manager(ip)
+    net_manager.start()
     unity_editor = XRDevice("ALRMetaQuest3")
     use_bbox = partial(save_bbox, color=color, depth=depth, folder=folder, file=file)
     unity_editor.register_topic_callback(
@@ -117,7 +119,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("path")
     parser.add_argument("file")
+    parser.add_argument('--ip',default="192.168.0.134")
     opts = parser.parse_args()
 
-    send_saved_point_cloud(opts.path, opts.file)
+    # data_path = "debug/frames"
+    # file_name = "1724146523748c.npz"
+    # ip_addr = "192.168.0.103"
+
+    # send_saved_point_cloud(data_path, file_name, ip_addr)
+    send_saved_point_cloud(opts.path, opts.file, opts.ip)
     # send_saved_point_cloud("debug/frames","1724146523748.npz")
