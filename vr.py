@@ -39,6 +39,13 @@ def get_bbox(msg, use_bbox):
     center_pose, bbox = from_quaternion(pos, rot, sca)
     use_bbox(bbox=bbox, center_pose=center_pose)
 
+def bbox2msg(bbox,center_pose):
+    pos, rot, sca = to_quaternion(center_pose, bbox)
+    data = [i.item() for l in [pos, rot, sca] for i in l]
+    o = json.dumps({"data": [data]})
+    return o
+
+
 def save_bbox(color, depth, bbox, center_pose, folder, file):
     if file is not None:
         from pathlib import Path
@@ -67,6 +74,21 @@ def from_quaternion(translation, quaternion, local_scale):
     return T, np.float64([S, -S])
 
 
+def to_quaternion(T, scaled_values):
+    # Extract the translation
+    translation = T[:3, 3]
+    
+    # Extract the scale
+    S = scaled_values[0] * 2
+    
+    # Extract the rotation matrix and normalize it by the scale
+    R = T[:3, :3] / S
+    
+    # Convert the rotation matrix back to a quaternion
+    quaternion = Rotation.from_matrix(R).as_quat()
+    
+    return translation, quaternion, S
+
 def to_quaternion(T, S):
     T, S = np.float64(T), np.float64(S)
     s = S[0] - S[1]
@@ -93,6 +115,12 @@ def send_saved_point_cloud(folder, file, ip):
     )
     send_point_cloud(net_manager, unity_editor, color, depth)
     net_manager.join()
+
+def send_bbox(bbox, center_pose, unity_editor):
+    s = bbox2msg(bbox, center_pose)
+    while unity_editor.connected is False:
+        pass
+    unity_editor.request("LoadBBox", s)
 
 
 def send_point_cloud(net_manager, unity_editor, color, depth):
