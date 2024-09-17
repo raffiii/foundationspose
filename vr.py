@@ -1,7 +1,7 @@
 import json, random
 import numpy as np
-from SimPublisher.simpub.core.net_manager import init_net_manager, logger
-from SimPublisher.simpub.xr_device.xr_device import XRDevice
+from simpub.core.net_manager import init_net_manager, logger
+from simpub.xr_device.xr_device import XRDevice
 from functools import partial
 import argparse
 from scipy.spatial.transform import Rotation
