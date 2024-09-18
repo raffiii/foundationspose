@@ -39,7 +39,8 @@ def get_bbox(msg, use_bbox):
     center_pose, bbox = from_quaternion(pos, rot, sca)
     use_bbox(bbox=bbox, center_pose=center_pose)
 
-def bbox2msg(bbox,center_pose):
+
+def bbox2msg(bbox, center_pose):
     pos, rot, sca = to_quaternion(center_pose, bbox)
     data = [i.item() for l in [pos, rot, sca] for i in l]
     o = json.dumps({"data": [data]})
@@ -77,17 +78,18 @@ def from_quaternion(translation, quaternion, local_scale):
 def to_quaternion(T, scaled_values):
     # Extract the translation
     translation = T[:3, 3]
-    
+
     # Extract the scale
     S = scaled_values[0] * 2
-    
+
     # Extract the rotation matrix and normalize it by the scale
     R = T[:3, :3] / S
-    
+
     # Convert the rotation matrix back to a quaternion
     quaternion = Rotation.from_matrix(R).as_quat()
-    
+
     return translation, quaternion, S
+
 
 def to_quaternion(T, S):
     T, S = np.float64(T), np.float64(S)
@@ -104,7 +106,7 @@ def send_saved_point_cloud(folder, file, ip):
     data = np.load(path)
     color = data["color"]
     depth = data["depth"]
-    #net_manager = init_net_manager("10.10.10.220")
+    # net_manager = init_net_manager("10.10.10.220")
     net_manager = init_net_manager(ip)
     net_manager.start()
     unity_editor = XRDevice("ALRMetaQuest3")
@@ -115,6 +117,7 @@ def send_saved_point_cloud(folder, file, ip):
     )
     send_point_cloud(net_manager, unity_editor, color, depth)
     net_manager.join()
+
 
 def send_bbox(bbox, center_pose, unity_editor):
     s = bbox2msg(bbox, center_pose)
@@ -131,25 +134,24 @@ def send_point_cloud(net_manager, unity_editor, color, depth):
         pass
     unity_editor.request("LoadPointCloud", send_data)
 
-def send_live_point_cloud(ip,color, depth, use_bbox):
+
+def send_live_point_cloud(ip, color, depth, use_bbox):
     net_manager = init_net_manager(ip)
     net_manager.start()
     unity_editor = XRDevice("ALRMetaQuest3")
-    send_point_cloud(net_manager, unity_editor, color, depth)
+    send_point_cloud(net_manager, unity_editor, color[..., ::-1], depth)
     unity_editor.register_topic_callback(
         "bbox_submission",
         partial(get_bbox, use_bbox=use_bbox),
     )
     return net_manager
-    
-
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("path")
     parser.add_argument("file")
-    parser.add_argument('--ip',default="192.168.0.134")
+    parser.add_argument("--ip", default="192.168.0.134")
     opts = parser.parse_args()
 
     # data_path = "debug/frames"
