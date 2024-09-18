@@ -4,7 +4,10 @@ from simpub.core.net_manager import init_net_manager, logger
 from simpub.xr_device.xr_device import XRDevice
 from functools import partial
 import argparse
+import os, os.path
+import threading, time
 from scipy.spatial.transform import Rotation
+import cv2
 
 
 def generate_point_cloud_data(rgb_image, depth_image):
@@ -29,7 +32,7 @@ def generate_point_cloud_data(rgb_image, depth_image):
     return json.dumps({"positions": positions, "colors": colors})
 
 
-def get_bbox(msg, use_bbox):
+def get_bbox(msg, use_bbox, stop = lambda: None):
     o = json.loads(msg)
     logger.info(f"Got bbox msg: {o}")
     data = o["data"][0]
@@ -38,6 +41,7 @@ def get_bbox(msg, use_bbox):
     sca = np.float64(data[7:])
     center_pose, bbox = from_quaternion(pos, rot, sca)
     use_bbox(bbox=bbox, center_pose=center_pose)
+    stop()
 
 
 def bbox2msg(bbox, center_pose):
@@ -61,6 +65,7 @@ def save_bbox(color, depth, bbox, center_pose, folder, file):
             bbox=bbox,
             center_pose=center_pose,
         )
+    
 
 
 def from_quaternion(translation, quaternion, local_scale):
@@ -100,23 +105,38 @@ def to_quaternion(T, S):
     r = r / local_scale
     q = Rotation.from_matrix(r).as_quat()
 
+def waiting():
+    is_running = []
+    def run():
+        while len(is_running) == 0:
+            time.sleep(0.1)
+    def stop(): 
+        is_running.append(0) 
+    wait = threading.Thread(target = run)
+    return wait, stop
+    
 
-def send_saved_point_cloud(folder, file, ip):
-    path = f"{folder}/{file}"
-    data = np.load(path)
-    color = data["color"]
-    depth = data["depth"]
+def send_saved_point_cloud(folder, files, ip):
     # net_manager = init_net_manager("10.10.10.220")
     net_manager = init_net_manager(ip)
     net_manager.start()
     unity_editor = XRDevice("ALRMetaQuest3")
-    use_bbox = partial(save_bbox, color=color, depth=depth, folder=folder, file=file)
-    unity_editor.register_topic_callback(
-        "bbox_submission",
-        partial(get_bbox, use_bbox=use_bbox),
-    )
-    send_point_cloud(net_manager, unity_editor, color, depth)
-    net_manager.join()
+    for file in files:
+        path = f"{folder}/{file}"
+        data = np.load(path)
+        color = data["color"]
+        depth = data["depth"]
+        use_bbox = partial(save_bbox, color=color, depth=depth, folder=folder, file=file)
+        await_label, stop = waiting()
+        unity_editor.register_topic_callback(
+            "bbox_submission",
+            partial(get_bbox, use_bbox=use_bbox, stop = stop)
+            
+        )
+        send_point_cloud(net_manager, unity_editor, color, depth)
+        cv2.imshow("color", color)
+        await_label.start()
+        await_label.join()
 
 
 def send_bbox(bbox, center_pose, unity_editor):
@@ -150,14 +170,21 @@ def send_live_point_cloud(ip, color, depth, use_bbox):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("path")
-    parser.add_argument("file")
+    parser.add_argument("--file", default=None)
     parser.add_argument("--ip", default="192.168.0.134")
     opts = parser.parse_args()
+
+    # check if whole directory is to label
+    if opts.file is None:
+        files = [f for f in os.listdir(opts.path) if os.path.isfile(os.path.join(opts.path, f))]
+    else:
+        files = [opts.file]
+
 
     # data_path = "debug/frames"
     # file_name = "1724146523748c.npz"
     # ip_addr = "192.168.0.103"
 
     # send_saved_point_cloud(data_path, file_name, ip_addr)
-    send_saved_point_cloud(opts.path, opts.file, opts.ip)
+    send_saved_point_cloud(opts.path, files, opts.ip)
     # send_saved_point_cloud("debug/frames","1724146523748.npz")

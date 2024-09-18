@@ -277,8 +277,8 @@ def send_vr(color, depth, opts):
     net_manager = None
 
     def save(bbox, center_pose):
-        net_manager.stop_server()
         save_frame(color, depth, center_pose, bbox, opts, sub_dir="frames/labeled")
+        
 
     vr.send_live_point_cloud(opts.simpublish_ip, color, depth, save)
 
