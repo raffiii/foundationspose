@@ -67,8 +67,14 @@ RUN conda activate my &&\
 
     
 RUN conda activate my &&\
-    pip install pyrealsense2 trimesh depthai colorama git+https://github.com/raffiii/SimPublisher.git
+    pip install pyrealsense2 trimesh depthai colorama
     
+RUN conda activate my &&\
+    pip install debugpy
+
+COPY SimPublisher /app/SimPublisher
+RUN conda activate my &&\
+    cd /app/SimPublisher && pip install -e .
 
 
 ENV SHELL=/bin/bash

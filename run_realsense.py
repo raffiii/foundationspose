@@ -236,7 +236,6 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
         est.pose_last = pose
     def run(pipeline, depth_scale=4.0):
         mask = get_mask(pipeline,opts)
-        cv2.imshow("mask", mask,)
 
         profile = pipeline.get_active_profile()
         color_stream = profile.get_stream(rs.stream.depth)
@@ -297,7 +296,7 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
             key = cv2.waitKey(1) 
             if saveFrame is not None and key & 0xFF == ord('s'):
                 logging.info("----------------- Saving Frame")
-                saveFrame(depth,color,center_pose,bbox,opts)
+                saveFrame(color,depth,center_pose,bbox,opts)
             if opts.simpublish_ip is not None and key & 0xFF == ord('v'):
                 send_vr(color, depth, opts)
             # visualize the scene
@@ -309,27 +308,68 @@ def run_live_estimation(opts, get_mask=mask, device='cuda:0',saveFrame=None):
                 break
         if saveFrame:
             saveFrame(color,depth,center_pose,bbox,opts)
-        np.savez(f"{opts.debug_dir}/{opts.save_to}.npz",mask=mask, poses=np.concatenate(poses,axis=0))
     return run     
 
-def run_capture(opts):
-    def run(pipeline):
-        while True:
-            frames = pipeline.wait_for_frames()
+
+
+# Precompute the model with run_ycbv/run_linemode in run_nerf.py
+def run_live_capture(opts, get_mask=mask, device='cuda:0',saveFrame=None):
+    """
+    Create a method to run the estimator with a pipeline, either live or a recorded stream
+    """
+    def run(pipeline, depth_scale=4.0):
+
+        profile = pipeline.get_active_profile()
+        color_stream = profile.get_stream(rs.stream.depth)
+        intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
+        K = np.array([[intrinsics.fx,0.0,intrinsics.ppx],[0.0,intrinsics.fy, intrinsics.ppy],[0.0,0.0,1.0]])
+        # mask = np.ones((intrinsics.height, intrinsics.width))
+        
+        rgbWeight = 0.75
+
+        align_to = rs.stream.color
+        align = rs.align(align_to)
+
+
+        while(True):
+            # Getting a frame from the realsense camera
+            raw_frames = pipeline.wait_for_frames()
+            
+            frames =    align.process(raw_frames)
             depth_frame = frames.get_depth_frame()
             color_frame = frames.get_color_frame()
 
             if not depth_frame or not color_frame:
                 continue
-            break
 
-        # Convert images to numpy arrays
-        depth = np.asanyarray(depth_frame.get_data()).astype(np.float16)
-        depth = depth / np.max(depth) * 4.0
-        color = np.asanyarray(color_frame.get_data()).astype(np.float32)
+            # Convert images to numpy arrays and apply necessary transformations
+            raw_depth = np.asanyarray(depth_frame.get_data())
+            #depth = raw_depth / np.max(raw_depth) * 4.0
+            depth = raw_depth * depth_scale
 
-        save_frame(color,depth,np.zeros(0),np.zeros(0),opts)
-    return run
+            color = np.uint8(color_frame.get_data())
+
+            cv2.imshow('color', color)
+            vis_base = color
+            if opts.show_depth:
+                if len(depth.shape) < 3:
+                   show_depth = cv2.applyColorMap(cv2.convertScaleAbs(raw_depth, alpha=.1, beta=10), cv2.COLORMAP_JET)
+                blended = cv2.addWeighted(color, 1-rgbWeight, show_depth, rgbWeight, 0)
+                #cv2.imshow('blended', blended)
+                #cv2.imshow('depth', show_depth)
+                vis_base = blended
+            # Save frame if user presses the 's' key
+            key = cv2.waitKey(1) 
+            if saveFrame is not None and key & 0xFF == ord('s'):
+                logging.info("----------------- Saving Frame")
+                saveFrame(color,depth,None,None,opts)
+            if opts.simpublish_ip is not None and key & 0xFF == ord('v'):
+                send_vr(color, depth, opts)
+            # visualize the scene
+            cv2.imshow('1', vis_base)
+            if key & 0xFF == ord('q'):
+                break
+    return run     
 
      
 
@@ -338,7 +378,7 @@ if __name__ == '__main__':
     parser.add_argument('--ref_view_dir', type=str, default='assets/YCBV/ref_views_16')
     parser.add_argument('--recorded_path', type=str,default=None)
     parser.add_argument('--save_to',type=str,default='test')
-    parser.add_argument('--ob_id', type=int,default=10)
+    parser.add_argument('--ob_id', type=int,default=None)
     parser.add_argument('--debug', type=int, default=0)
     parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/debug')
     parser.add_argument('--track_refine_iter', type=int, default=2)
@@ -353,8 +393,8 @@ if __name__ == '__main__':
         opts.ob_name = opts.ob_id
     if opts.simpublish_ip is not None:
         import vr
-    if opts.capture:
-        run_with_pipeline(run_capture(opts),opts)
+    if opts.ob_id is None:
+        run_with_pipeline(run_live_capture(opts, saveFrame=save_frame),opts)
     elif opts.demo:
         run_with_pipeline(run_demo,opts)
     else:

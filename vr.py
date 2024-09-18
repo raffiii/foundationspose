@@ -124,6 +124,7 @@ def send_bbox(bbox, center_pose, unity_editor):
 
 
 def send_point_cloud(net_manager, unity_editor, color, depth):
+
     send_data = generate_point_cloud_data(color, depth)
     # print(generate_point_cloud_data(rgb_image, depth_image))
     while unity_editor.connected is False:
@@ -132,6 +133,7 @@ def send_point_cloud(net_manager, unity_editor, color, depth):
 
 def send_live_point_cloud(ip,color, depth, use_bbox):
     net_manager = init_net_manager(ip)
+    net_manager.start()
     unity_editor = XRDevice("ALRMetaQuest3")
     send_point_cloud(net_manager, unity_editor, color, depth)
     unity_editor.register_topic_callback(

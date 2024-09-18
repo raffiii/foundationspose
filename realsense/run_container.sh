@@ -19,5 +19,6 @@ xhost +  && docker run \
     --ipc=host \
     -e DISPLAY=${DISPLAY} \
     -e GIT_INDEX_FILE \
+    -p "5678:5678" \
     foundationspose/realsense:latest bash \
     -c "cd $DIR && bash"
