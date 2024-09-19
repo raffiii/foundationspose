@@ -20,7 +20,7 @@ def generate_point_cloud_data(rgb_image, depth_image):
             depth_pixel = depth_image[y, x]
             if random.random() > 0.1:
                 continue
-            positions.extend([-float(x / width), float(depth_pixel), -float(y / height)])
+            positions.extend([-float(x / width), -float(y / height), float(depth_pixel) ])
             colors.extend(
                 [
                     int(rgb_pixel[0]) / 255,
@@ -33,23 +33,32 @@ def generate_point_cloud_data(rgb_image, depth_image):
 
 
 def get_bbox(msg, use_bbox, stop=lambda: None):
+    view_transform = np.array([[-1,0,0,0],
+                               [0,0,-1,0],
+                               [0,1,0,0],
+                               [0,0,0,1]])
     o = json.loads(msg)
     logger.info(f"Got bbox msg: {o}")
     data = o["data"][0]
     pos = np.float64(data[:3])
     rot = np.float64(data[3:7])
-    sca = np.float64(data[7:]) / 5
+    sca = np.float64(data[7:])
     center_pose, bbox = from_quaternion(pos, rot, sca)
     use_bbox(bbox=bbox, center_pose=center_pose)
     stop()
 
 
 def bbox2msg(bbox, center_pose):
+    translate1 = np.eye(4)
+    translate1[:3, 3] = -center_pose[:3, 3]
+    translate2 = np.eye(4)
+    translate2[:3, 3] = center_pose[:3, 3]
     view_transform = np.array([[-1,0,0,0],
-                               [0,0,1,0],
-                               [0,-1,0,0],
+                               [0,0,-1,0],
+                               [0,1,0,0],
                                [0,0,0,1]])
-    pos, rot, sca = to_quaternion(center_pose @ view_transform, bbox)
+    #center_pose = center_pose @ translate1 @ view_transform @ translate2
+    pos, rot, sca = to_quaternion(view_transform @ center_pose , bbox)
     data = [i.item() for l in [pos, rot, sca] for i in l]
     o = json.dumps({"data": [data]})
     return o
