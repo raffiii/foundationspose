@@ -21,7 +21,7 @@ def generate_point_cloud_data(rgb_image, depth_image):
             if random.random() > 0.1:
                 continue
             positions.extend(
-                [ -float((x - width /2) / width), -float(depth_pixel), float((y -height /2) / height)]
+                [ -float((x - width /2) / width), float((y -height /2) / height), float(depth_pixel)]
             )
             colors.extend(
                 [
@@ -47,7 +47,7 @@ def get_bbox(msg, use_bbox, stop=lambda: None):
 
 
 def bbox2msg(bbox, center_pose):
-    pos, rot, sca = to_quaternion(view_transform @ center_pose, bbox)
+    pos, rot, sca = to_quaternion(center_pose, bbox)
     data = [i.item() for l in [pos, rot, sca] for i in l]
     o = json.dumps({"data": [data]})
     return o
