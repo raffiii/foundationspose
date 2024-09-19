@@ -273,14 +273,12 @@ def save_frame(color, depth, center_pose, bbox, opts, sub_dir="frames"):
     logging.info("Frame saved!")
 
 
-def send_vr(color, depth, opts):
-    net_manager = None
-
+def send_vr(color, depth, opts, bbox = None, center_pose = None):
     def save(bbox, center_pose):
         save_frame(color, depth, center_pose, bbox, opts, sub_dir="frames/labeled")
         
 
-    vr.send_live_point_cloud(opts.simpublish_ip, color, depth, save)
+    vr.send_live_point_cloud(opts.simpublish_ip, color, depth, save, bbox=bbox, center_pose=center_pose)
 
 
 # Precompute the model with run_ycbv/run_linemode in run_nerf.py
@@ -308,6 +306,7 @@ def run_live_estimation(opts, get_mask=mask, device="cuda:0", saveFrame=None):
                 [0.0, 0.0, 1.0],
             ]
         )
+        np.savez("debug/K.npz", K=K)
         # mask = np.ones((intrinsics.height, intrinsics.width))
 
         #
@@ -370,7 +369,7 @@ def run_live_estimation(opts, get_mask=mask, device="cuda:0", saveFrame=None):
                 logging.info("----------------- Saving Frame")
                 saveFrame(color, depth, center_pose, bbox, opts)
             if opts.simpublish_ip is not None and key & 0xFF == ord("v"):
-                send_vr(color, depth, opts)
+                send_vr(color, depth, opts, bbox, center_pose)
             # visualize the scene
             if center_pose is not None:
                 vis = draw_posed_3d_box(

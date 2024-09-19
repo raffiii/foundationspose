@@ -20,7 +20,9 @@ def generate_point_cloud_data(rgb_image, depth_image):
             depth_pixel = depth_image[y, x]
             if random.random() > 0.1:
                 continue
-            positions.extend([-float(x / width), -float(y / height), float(depth_pixel) ])
+            positions.extend(
+                [ -float((x - width /2) / width), -float(depth_pixel), float((y -height /2) / height)]
+            )
             colors.extend(
                 [
                     int(rgb_pixel[0]) / 255,
@@ -33,10 +35,6 @@ def generate_point_cloud_data(rgb_image, depth_image):
 
 
 def get_bbox(msg, use_bbox, stop=lambda: None):
-    view_transform = np.array([[-1,0,0,0],
-                               [0,0,-1,0],
-                               [0,1,0,0],
-                               [0,0,0,1]])
     o = json.loads(msg)
     logger.info(f"Got bbox msg: {o}")
     data = o["data"][0]
@@ -49,16 +47,7 @@ def get_bbox(msg, use_bbox, stop=lambda: None):
 
 
 def bbox2msg(bbox, center_pose):
-    translate1 = np.eye(4)
-    translate1[:3, 3] = -center_pose[:3, 3]
-    translate2 = np.eye(4)
-    translate2[:3, 3] = center_pose[:3, 3]
-    view_transform = np.array([[-1,0,0,0],
-                               [0,0,-1,0],
-                               [0,1,0,0],
-                               [0,0,0,1]])
-    #center_pose = center_pose @ translate1 @ view_transform @ translate2
-    pos, rot, sca = to_quaternion(view_transform @ center_pose , bbox)
+    pos, rot, sca = to_quaternion(view_transform @ center_pose, bbox)
     data = [i.item() for l in [pos, rot, sca] for i in l]
     o = json.dumps({"data": [data]})
     return o
@@ -78,6 +67,7 @@ def save_bbox(color, depth, bbox, center_pose, folder, file):
             bbox=bbox,
             center_pose=center_pose,
         )
+
 
 def from_quaternion(translation, quaternion, local_scale):
     S = np.diag(local_scale)
@@ -105,8 +95,6 @@ def to_quaternion(T, scaled_values):
     quaternion = Rotation.from_matrix(R).as_quat()
 
     return translation, quaternion, S
-
-
 
 
 def waiting():
@@ -141,7 +129,7 @@ def send_point_cloud(net_manager, unity_editor, color, depth):
     unity_editor.request("LoadPointCloud", send_data)
 
 
-def send_live_point_cloud(ip, color, depth, use_bbox, bbox = None, center_pose = None):
+def send_live_point_cloud(ip, color, depth, use_bbox, bbox=None, center_pose=None):
     net_manager = init_net_manager(ip)
     net_manager.start()
     unity_editor = XRDevice("ALRMetaQuest3")
@@ -175,11 +163,7 @@ def send_saved_point_cloud(folder, files, ip, do_send_bbox=False):
         )
         send_point_cloud(net_manager, unity_editor, color, depth)
         if do_send_bbox:
-            send_bbox(
-                data["bbox"],
-                data["center_pose"],
-                unity_editor
-            )
+            send_bbox(data["bbox"], data["center_pose"], unity_editor)
         cv2.imshow("color", color)
         await_label.start()
         await_label.join()
@@ -190,7 +174,7 @@ if __name__ == "__main__":
     parser.add_argument("path")
     parser.add_argument("--file", default=None)
     parser.add_argument("--ip", default="192.168.0.134")
-    parser.add_argument("-b", "--bbox", action='store_true')
+    parser.add_argument("-b", "--bbox", action="store_true")
     opts = parser.parse_args()
 
     # check if whole directory is to label
