@@ -189,8 +189,18 @@ if __name__ == "__main__":
 
     # data_path = "debug/frames"
     # file_name = "1724146523748c.npz"
-    # ip_addr = "192.168.0.103"
+    # ip_addr = "192.168.0.103"c
 
     # send_saved_point_cloud(data_path, file_name, ip_addr)
     send_saved_point_cloud(opts.path, files, opts.ip, do_send_bbox=opts.bbox)
     # send_saved_point_cloud("debug/frames","1724146523748.npz")
+
+"""
+Usage examples:
+
+python3 vr.py --ip <ip> <asset directory>
+
+# include loading predicted bounding box
+python3 vr.py --ip <ip> <asset directory> -b
+
+"""
