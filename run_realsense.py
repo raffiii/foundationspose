@@ -476,7 +476,6 @@ if __name__ == "__main__":
     parser.add_argument("--track_refine_iter", type=int, default=2)
     parser.add_argument("--start_pose_path", type=str, default=None)
     parser.add_argument("--ob_name", type=str, default=None)
-    parser.add_argument("-c", "--capture", action="store_true")
     parser.add_argument("-i", "--simpublish_ip", default=None)
     parser.add_argument("--demo", default=False)
     parser.add_argument("--show_depth", default=False, action="store_true")

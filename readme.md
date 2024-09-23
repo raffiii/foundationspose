@@ -2,6 +2,16 @@
 - Use realsense and OAK-D camera streams for real-time input
 - Use real-time tracking provided by FoundationPose (infos below)
 
+# Usage
+1. Running docker
+    1. docker build (just once per user): `docker build -t foundationpose -f realsense/dockerfile .`
+    2. docker run: `cd realsense/ && ./run_container.sh`
+2. Within docker:
+    1. install SimPublisher: `cd SimPublisher && pip install -e . && cd ..` (assuming SimPublisher is a subdirectory in this repo)
+    2. run the main thing with local ip of the pc, reachable by vr (e.g. 10.10.10.220 in the IRL Lab): `python run_realsense.py --show_depth --ob_id 14 -i <ip>`
+    3. press q for quit, press s for, press v for sending data to vr
+
+
 ---
 Original Project:
 # FoundationPose: Unified 6D Pose Estimation and Tracking of Novel Objects
